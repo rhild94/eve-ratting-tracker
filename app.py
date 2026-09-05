@@ -1,5 +1,5 @@
 
-import os,time,json,base64,sqlite3,secrets,asyncio,re
+import os,time,json,base64,sqlite3,secrets,asyncio,re,hashlib
 from datetime import datetime,timezone,timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.0.0"
+APP_VERSION="8.1.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -44,7 +44,7 @@ DB=BASE_DIR/"ratting_tracker.db"
 def db():
     c=sqlite3.connect(DB,timeout=30)
     c.row_factory=sqlite3.Row
-    c.execute("PRAGMA busy_timeout=30000")
+    c.execute("PRAGMA busy_timeout=5000")
     return c
 def col_exists(c,t,col): return any(r["name"]==col for r in c.execute(f"PRAGMA table_info({t})"))
 def ensure_col(c,t,d):
@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS esi_cache(cache_key TEXT PRIMARY KEY,payload_json TEX
 CREATE TABLE IF NOT EXISTS esi_sync_state(id INTEGER PRIMARY KEY CHECK(id=1),last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT);
 INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1);
 """)
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")
+        ensure_col(c,"oauth_states","code_verifier TEXT")
         for d in ["variant TEXT","session_id INTEGER","escalation_name TEXT","escalation_status TEXT","escalation_sale_value REAL DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value REAL DEFAULT 0","paused_at TEXT","paused_seconds REAL DEFAULT 0","esi_synced_at TEXT"]:
             ensure_col(c,"runs",d)
         for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT"]:
@@ -122,8 +125,12 @@ async def row_char(cid):
     with db() as c:return c.execute("SELECT * FROM characters WHERE character_id=?",(cid,)).fetchone()
 async def refresh(row):
     if row["expires_at"]>int(time.time())+60:return row["access_token"]
+    data={"grant_type":"refresh_token","refresh_token":row["refresh_token"]}
+    auth=None
+    if CLIENT_SECRET:auth=(CLIENT_ID,CLIENT_SECRET)
+    else:data["client_id"]=CLIENT_ID
     async with httpx.AsyncClient(timeout=30) as cl:
-        r=await cl.post(SSO_TOKEN,auth=(CLIENT_ID,CLIENT_SECRET),data={"grant_type":"refresh_token","refresh_token":row["refresh_token"]})
+        r=await cl.post(SSO_TOKEN,auth=auth,data=data)
         r.raise_for_status(); t=r.json()
     a=t["access_token"]; rr=t.get("refresh_token",row["refresh_token"]); ex=int(time.time())+int(t.get("expires_in",1200))
     with db() as c:c.execute("UPDATE characters SET access_token=?,refresh_token=?,expires_at=? WHERE character_id=?",(a,rr,ex,row["character_id"]))
@@ -274,24 +281,57 @@ async def dashboard_payload():
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
+    if not CLIENT_ID:return RedirectResponse("/setup",302)
     payload=await dashboard_payload()
-    return templates.TemplateResponse(request=request,name="index.html",context={"data":payload,"config_ok":bool(CLIENT_ID and CLIENT_SECRET)})
+    return templates.TemplateResponse(request=request,name="index.html",context={"data":payload,"config_ok":bool(CLIENT_ID),"version":APP_VERSION})
+
+@app.get("/setup",response_class=HTMLResponse)
+async def setup_page(request:Request):
+    return templates.TemplateResponse(request=request,name="setup.html",context={"configured":bool(CLIENT_ID),"version":APP_VERSION})
+
+@app.post("/setup")
+async def setup_save(client_id:str=Form("")):
+    global CLIENT_ID
+    cid=client_id.strip()
+    if not cid:return HTMLResponse("Client ID is required.",400)
+    env_path=BASE_DIR/".env"
+    existing={}
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                k,v=line.split("=",1);existing[k.strip()]=v.strip()
+    existing["EVE_CLIENT_ID"]=cid
+    existing.setdefault("EVE_CALLBACK_URL",CALLBACK_URL)
+    env_path.write_text("\n".join(f"{k}={v}" for k,v in existing.items())+"\n",encoding="utf-8")
+    CLIENT_ID=cid
+    return RedirectResponse("/",303)
 
 @app.get("/api/dashboard")
 async def api_dashboard(): return JSONResponse(await dashboard_payload())
 
 @app.get("/login")
 async def login():
+    if not CLIENT_ID:return RedirectResponse("/setup",302)
     st=secrets.token_urlsafe(32)
-    with db() as c:c.execute("INSERT INTO oauth_states VALUES(?,?)",(st,int(time.time())))
-    return RedirectResponse(SSO_AUTHORIZE+"?"+urlencode({"response_type":"code","redirect_uri":CALLBACK_URL,"client_id":CLIENT_ID,"scope":" ".join(SCOPES),"state":st}))
+    verifier=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    with db() as c:c.execute("INSERT INTO oauth_states(state,created_at,code_verifier) VALUES(?,?,?)",(st,int(time.time()),verifier))
+    return RedirectResponse(SSO_AUTHORIZE+"?"+urlencode({"response_type":"code","redirect_uri":CALLBACK_URL,"client_id":CLIENT_ID,"scope":" ".join(SCOPES),"state":st,"code_challenge":challenge,"code_challenge_method":"S256"}))
 @app.get("/callback")
 async def callback(code:str,state:str):
     with db() as c:
-        if not c.execute("SELECT 1 FROM oauth_states WHERE state=?",(state,)).fetchone():return HTMLResponse("Invalid OAuth state",400)
+        row=c.execute("SELECT * FROM oauth_states WHERE state=?",(state,)).fetchone()
+        if not row:return HTMLResponse("Invalid OAuth state",400)
+        verifier=row["code_verifier"]
         c.execute("DELETE FROM oauth_states WHERE state=?",(state,))
+    data={"grant_type":"authorization_code","code":code,"redirect_uri":CALLBACK_URL}
+    auth=None
+    if verifier:
+        data.update({"client_id":CLIENT_ID,"code_verifier":verifier})
+    elif CLIENT_SECRET:
+        auth=(CLIENT_ID,CLIENT_SECRET)
     async with httpx.AsyncClient(timeout=30) as cl:
-        r=await cl.post(SSO_TOKEN,auth=(CLIENT_ID,CLIENT_SECRET),data={"grant_type":"authorization_code","code":code});r.raise_for_status();t=r.json()
+        r=await cl.post(SSO_TOKEN,auth=auth,data=data);r.raise_for_status();t=r.json()
     cid=charid(t["access_token"]);pub=await esi_get(f"/characters/{cid}/")
     with db() as c:c.execute("""INSERT INTO characters VALUES(?,?,?,?,?,?) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso()))
     await sync_character(cid)
@@ -428,11 +468,17 @@ async def api_get_run(rid:int):
 
 @app.delete("/api/run/{rid}")
 async def api_delete_run(rid:int):
-    with db() as c:
-        r=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
-        if not r:return JSONResponse({"ok":False,"error":"Run not found."},404)
-        c.execute("DELETE FROM runs WHERE id=?",(rid,))
-    return JSONResponse({"ok":True})
+    for attempt in range(3):
+        try:
+            with db() as c:
+                r=c.execute("SELECT id FROM runs WHERE id=?",(rid,)).fetchone()
+                if not r:return JSONResponse({"ok":False,"error":"Run not found."},404)
+                c.execute("DELETE FROM runs WHERE id=?",(rid,))
+            return JSONResponse({"ok":True})
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower():raise
+            if attempt==2:return JSONResponse({"ok":False,"error":"Database is busy with an ESI update. Try again in a moment."},503)
+            await asyncio.sleep(.15)
 
 @app.post("/api/session/end")
 async def api_end_session(request:Request):
@@ -450,11 +496,17 @@ async def api_end_session(request:Request):
 
 @app.delete("/api/session/{sid}")
 async def api_delete_session(sid:int):
-    with db() as c:
-        c.execute("UPDATE ess_events SET session_id=NULL,match_status='unassigned' WHERE session_id=?",(sid,))
-        c.execute("DELETE FROM runs WHERE session_id=?",(sid,))
-        c.execute("DELETE FROM sessions WHERE id=?",(sid,))
-    return JSONResponse({"ok":True})
+    for attempt in range(3):
+        try:
+            with db() as c:
+                c.execute("UPDATE ess_events SET session_id=NULL,match_status='unassigned' WHERE session_id=?",(sid,))
+                c.execute("DELETE FROM runs WHERE session_id=?",(sid,))
+                c.execute("DELETE FROM sessions WHERE id=?",(sid,))
+            return JSONResponse({"ok":True})
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower():raise
+            if attempt==2:return JSONResponse({"ok":False,"error":"Database is busy with an ESI update. Try again in a moment."},503)
+            await asyncio.sleep(.15)
 
 @app.get("/progression",response_class=HTMLResponse)
 async def progression_page(request:Request):
