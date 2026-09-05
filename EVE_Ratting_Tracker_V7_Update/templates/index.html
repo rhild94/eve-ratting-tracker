@@ -1,0 +1,39 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EVE Ratting Tracker V7</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><div class="wrap">
+<header>
+<div><h1>◉ Ratting Tracker <small>V7</small></h1><p class="muted">Fast anomaly workflow</p></div>
+<nav class="tabs"><a class="active" href="/">Tracker</a><a href="/history">History</a><a href="/progression">Progression</a></nav>
+<div class="actions"><button id="syncBtn" class="secondary">↻ Sync ESI</button><a class="button" href="/login">+ Connect Character</a></div>
+</header>
+
+{% if not config_ok %}<div class="warning"><b>Configuration missing.</b> Check your existing <code>.env</code>.</div>{% endif %}
+
+<section class="cards">
+<div class="card"><span>Today's Bounty</span><b id="statBounty">0m</b></div>
+<div class="card"><span>Today's ESS</span><b id="statEss">0m</b></div>
+<div class="card"><span>Sites Today</span><b id="statSites">0</b></div>
+<div class="card"><span>Bounty ISK/hr</span><b id="statIskHr">0m</b></div>
+</section>
+
+<div id="sessionStrip"></div>
+
+<section class="panel tracker-panel">
+<div class="panel-head"><div><h2>Site Tracker</h2><span id="systemStatus" class="muted"></span></div><span id="saveStatus" class="muted"></span></div>
+<div id="trackerContent"></div>
+</section>
+
+<section class="panel">
+<div class="panel-head"><h2>Recent Runs</h2><a href="/history">Full history →</a></div>
+<div id="recentRuns"></div>
+</section>
+</div>
+
+<div id="modalBackdrop" class="modal-backdrop hidden">
+<div class="modal" id="modalContent"></div>
+</div>
+
+<script>window.INITIAL_DATA={{ data|tojson|safe }};</script>
+<script src="/static/site_data.js"></script>
+<script src="/static/tracker.js"></script>
+</body></html>
