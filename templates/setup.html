@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EVE Ratting Tracker Setup</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><div class="wrap">
+<header><div><h1>◉ Ratting Tracker</h1><p class="muted">First-run setup · v{{ version }}</p></div></header>
+<section class="panel" style="max-width:720px;margin:40px auto">
+<h2>{{ "Configuration" if configured else "One-time EVE connection setup" }}</h2>
+<p class="hint">The tracker uses EVE SSO with PKCE, so a client secret is not stored on your PC. If this is an upgrade, the launcher normally imports your existing configuration automatically.</p>
+<form method="post" action="/setup" class="start-layout">
+<div class="field full"><label>EVE Application Client ID</label><input name="client_id" required placeholder="Paste the public Client ID from developers.eveonline.com"></div>
+<div class="start-row"><button class="good big" type="submit">Save & Continue</button></div>
+</form>
+<p class="hint">Callback URL for the EVE application: <code>http://localhost:8000/callback</code></p>
+</section></div></body></html>
