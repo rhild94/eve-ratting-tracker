@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.2.0"
+APP_VERSION="8.2.1"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -512,7 +512,10 @@ async def progression_page(request:Request):
     with db() as c:chars=c.execute("SELECT character_id,name FROM characters ORDER BY connected_at").fetchall()
     out=[]
     for x in chars:
-        p=await progression(x["character_id"],50)
+        try:
+            p=await progression(x["character_id"],50)
+        except Exception:
+            p={"total_sp":0,"queue":[],"changes":[],"captured_at":None}
         out.append({"id":x["character_id"],"name":x["name"],"portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
     return templates.TemplateResponse(request=request,name="progression.html",context={"characters":out})
 
