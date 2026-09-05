@@ -210,7 +210,6 @@ function showQuickResult(run,escalations,bountyPending){
  $("#gotEsc").onchange=e=>$("#escFields").classList.toggle("hidden",!e.target.checked);
  $("#gotRare").onchange=e=>$("#rareFields").classList.toggle("hidden",!e.target.checked);
  $("#closeResult").onclick=()=>finishResult(false,run.id);
- $("#skipNext").onclick=()=>finishResult(false,run.id);
  $("#saveNext").onclick=()=>finishResult(true,run.id);
  showModal();
 }
