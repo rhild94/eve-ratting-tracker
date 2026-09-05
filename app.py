@@ -1,6 +1,7 @@
 
-import os,time,json,base64,sqlite3,secrets
+import os,time,json,base64,sqlite3,secrets,asyncio,re
 from datetime import datetime,timezone,timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -17,6 +18,8 @@ CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
 CALLBACK_URL=os.getenv("EVE_CALLBACK_URL","http://localhost:8000/callback").strip()
 HOST=os.getenv("TRACKER_HOST","127.0.0.1"); PORT=int(os.getenv("TRACKER_PORT","8000"))
+AUTO_SYNC_INTERVAL_SECONDS=max(60,int(os.getenv("ESI_AUTO_SYNC_SECONDS","1800")))
+AUTO_SYNC_INITIAL_DELAY_SECONDS=max(1,int(os.getenv("ESI_AUTO_SYNC_INITIAL_DELAY_SECONDS","10")))
 
 SCOPES=["esi-skills.read_skills.v1","esi-skills.read_skillqueue.v1","esi-wallet.read_character_wallet.v1","esi-location.read_location.v1","esi-location.read_ship_type.v1"]
 SSO_AUTHORIZE="https://login.eveonline.com/v2/oauth/authorize/"
@@ -32,7 +35,7 @@ ESCALATIONS={
 "Angel Haven":["Angel Cartel Naval Shipyard","Angel Capital Staging","Angel Shielded Starbase","Angel Occupied Mine"],
 "Angel Sanctum":["Angel Shielded Starbase","Angel Capital Staging","Angel Naval Shipyard","Angel Occupied Mine"]}
 
-app=FastAPI(title="EVE Ratting Tracker V7")
+app=FastAPI(title="EVE Ratting Tracker V8")
 app.mount("/static",StaticFiles(directory=BASE_DIR/"static"),name="static")
 templates=Jinja2Templates(directory=BASE_DIR/"templates")
 DB=BASE_DIR/"ratting_tracker.db"
@@ -56,6 +59,9 @@ CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY AUTOINCREMENT,anomaly TEX
 CREATE TABLE IF NOT EXISTS type_names(type_id INTEGER PRIMARY KEY,name TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL DEFAULT 'active',loot_value REAL DEFAULT 0,salvage_value REAL DEFAULT 0,notes TEXT);
 CREATE TABLE IF NOT EXISTS ess_events(entry_id INTEGER PRIMARY KEY,character_id INTEGER NOT NULL,date TEXT NOT NULL,amount REAL NOT NULL,session_id INTEGER,match_status TEXT NOT NULL DEFAULT 'unassigned');
+CREATE TABLE IF NOT EXISTS esi_cache(cache_key TEXT PRIMARY KEY,payload_json TEXT NOT NULL,expires_at TEXT,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS esi_sync_state(id INTEGER PRIMARY KEY CHECK(id=1),last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT);
+INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1);
 """)
         for d in ["variant TEXT","session_id INTEGER","escalation_name TEXT","escalation_status TEXT","escalation_sale_value REAL DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value REAL DEFAULT 0","paused_at TEXT","paused_seconds REAL DEFAULT 0","esi_synced_at TEXT"]:
             ensure_col(c,"runs",d)
@@ -77,11 +83,39 @@ def charid(t):
     s=jwt_payload(t).get("sub","")
     return int(s.rsplit(":",1)[-1]) if s.startswith("CHARACTER:EVE:") else None
 
+def esi_cache_expiry(headers):
+    cc=headers.get("cache-control","")
+    m=re.search(r"(?:^|,)\\s*max-age=(\\d+)",cc,re.I)
+    if m:return utcnow()+timedelta(seconds=max(0,int(m.group(1))))
+    ex=headers.get("expires")
+    if ex:
+        try:
+            d=parsedate_to_datetime(ex)
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except:pass
+    return utcnow()
+
 async def esi_get(path,token=None,params=None):
-    h={"Accept":"application/json","User-Agent":"Rafael-EVE-Ratting-Tracker/7.0","X-Compatibility-Date":COMPAT_DATE}
-    if token: h["Authorization"]=f"Bearer {token}"
+    cache_key=path+"?"+json.dumps(params or {},sort_keys=True,separators=(",",":"))
+    with db() as c:
+        cached=c.execute("SELECT payload_json,expires_at FROM esi_cache WHERE cache_key=?",(cache_key,)).fetchone()
+    if cached and cached["expires_at"]:
+        try:
+            if parse_iso(cached["expires_at"])>utcnow():
+                return json.loads(cached["payload_json"])
+        except:pass
+    h={"Accept":"application/json","User-Agent":"Rafael-EVE-Ratting-Tracker/8.0","X-Compatibility-Date":COMPAT_DATE}
+    if token:h["Authorization"]=f"Bearer {token}"
     async with httpx.AsyncClient(timeout=30) as cl:
-        r=await cl.get(ESI+path,headers=h,params=params); r.raise_for_status(); return r.json()
+        r=await cl.get(ESI+path,headers=h,params=params)
+        r.raise_for_status()
+        payload=r.json()
+    expires=esi_cache_expiry(r.headers)
+    with db() as c:
+        c.execute("""INSERT INTO esi_cache(cache_key,payload_json,expires_at,updated_at) VALUES(?,?,?,?)
+                     ON CONFLICT(cache_key) DO UPDATE SET payload_json=excluded.payload_json,expires_at=excluded.expires_at,updated_at=excluded.updated_at""",
+                  (cache_key,json.dumps(payload),iso(expires),iso()))
+    return payload
 
 async def row_char(cid):
     with db() as c:return c.execute("SELECT * FROM characters WHERE character_id=?",(cid,)).fetchone()
@@ -232,7 +266,10 @@ async def dashboard_payload():
     with db() as c:
         pending_esi=c.execute("SELECT COUNT(*) AS n FROM runs WHERE status='complete' AND esi_synced_at IS NULL").fetchone()["n"]
         last_sync=c.execute("SELECT MAX(last_esi_sync) AS t FROM characters").fetchone()["t"]
-    return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":{"pending_runs":pending_esi,"last_sync":last_sync}}
+        sync_state=c.execute("SELECT * FROM esi_sync_state WHERE id=1").fetchone()
+    esi_state={"pending_runs":pending_esi,"last_sync":last_sync,"interval_minutes":AUTO_SYNC_INTERVAL_SECONDS//60}
+    if sync_state:esi_state.update({k:sync_state[k] for k in ["last_attempt","last_success","last_error","next_check"]})
+    return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":esi_state}
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
@@ -259,21 +296,57 @@ async def callback(code:str,state:str):
     await sync_character(cid)
     return RedirectResponse("/",302)
 
-@app.post("/api/sync")
-async def api_sync():
-    with db() as c:ids=[x["character_id"] for x in c.execute("SELECT character_id FROM characters")]
+async def run_esi_sync(source="manual"):
+    attempt=iso()
+    next_check=iso(utcnow()+timedelta(seconds=AUTO_SYNC_INTERVAL_SECONDS))
+    with db() as c:
+        c.execute("UPDATE esi_sync_state SET last_attempt=?,next_check=? WHERE id=1",(attempt,next_check))
+        ids=[x["character_id"] for x in c.execute("SELECT character_id FROM characters")]
     errors=[]
     for cid in ids:
         try:await sync_character(cid)
-        except Exception as e:errors.append(f"{cid}: {e}")
+        except Exception as e:errors.append(f"{cid}: {type(e).__name__}: {e}")
     synced=iso()
-    with db() as c:rids=[r["id"] for r in c.execute("SELECT id FROM runs WHERE status='complete'")]
-    for rid in rids:
-        try:
-            reconcile_bounty(rid)
-            with db() as c:c.execute("UPDATE runs SET esi_synced_at=? WHERE id=?",(synced,rid))
-        except Exception as e:errors.append(f"run {rid}: {e}")
-    return JSONResponse({"ok":not errors,"errors":errors,"dashboard":await dashboard_payload()})
+    if not errors:
+        with db() as c:rids=[r["id"] for r in c.execute("SELECT id FROM runs WHERE status='complete'")]
+        for rid in rids:
+            try:
+                reconcile_bounty(rid)
+                with db() as c:c.execute("UPDATE runs SET esi_synced_at=? WHERE id=?",(synced,rid))
+            except Exception as e:errors.append(f"run {rid}: {type(e).__name__}: {e}")
+    with db() as c:
+        if errors:
+            c.execute("UPDATE esi_sync_state SET last_error=? WHERE id=1",("; ".join(errors)[:1000],))
+        else:
+            c.execute("UPDATE esi_sync_state SET last_success=?,last_error=NULL WHERE id=1",(synced,))
+    return {"ok":not errors,"errors":errors,"source":source}
+
+async def auto_sync_loop():
+    await asyncio.sleep(AUTO_SYNC_INITIAL_DELAY_SECONDS)
+    while True:
+        try:await run_esi_sync("auto")
+        except Exception as e:
+            with db() as c:
+                c.execute("UPDATE esi_sync_state SET last_attempt=?,last_error=?,next_check=? WHERE id=1",
+                          (iso(),f"{type(e).__name__}: {e}"[:1000],iso(utcnow()+timedelta(seconds=AUTO_SYNC_INTERVAL_SECONDS))))
+        await asyncio.sleep(AUTO_SYNC_INTERVAL_SECONDS)
+
+@app.on_event("startup")
+async def start_auto_sync():
+    app.state.esi_sync_task=asyncio.create_task(auto_sync_loop())
+
+@app.on_event("shutdown")
+async def stop_auto_sync():
+    task=getattr(app.state,"esi_sync_task",None)
+    if task:
+        task.cancel()
+        try:await task
+        except asyncio.CancelledError:pass
+
+@app.post("/api/sync")
+async def api_sync():
+    result=await run_esi_sync("manual")
+    return JSONResponse({**result,"dashboard":await dashboard_payload()})
 
 @app.post("/api/run/start")
 async def api_start_run(request:Request):
