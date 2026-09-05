@@ -229,3 +229,14 @@ def test_character_can_be_designated_main(page):
         btn.click()
     expect(page.locator(".role-action.is-main")).to_contain_text("Main")
     expect(page.locator(".character-copy small")).to_contain_text("Main character")
+
+
+def test_history_heat_scale_is_visible(page):
+    start_site(page)
+    complete_site(page)
+    page.click("#saveNext")
+    page.goto(page.url.rstrip("/") + "/history")
+    expect(page.locator(".income-legend")).to_contain_text("Lower ISK")
+    expect(page.locator(".income-legend")).to_contain_text("Higher ISK")
+    colors = page.evaluate("() => [incomeColor(0).css, incomeColor(100000000).css]")
+    assert colors[0] != colors[1]
