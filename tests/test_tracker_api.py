@@ -182,3 +182,47 @@ def test_ess_history_shows_character_name_without_assignment_controls(test_app):
         assert "Playwright Pilot" in r.text
         assert "Character ID" not in r.text
         assert "Unassigned" not in r.text
+
+
+def test_delete_session_and_immediate_start_never_500(test_app):
+    import sqlite3
+    import threading
+    import time
+
+    base = test_app["base_url"]
+    with httpx.Client(base_url=base, timeout=5) as c:
+        r = c.post("/api/run/start", json={
+            "anomaly":"Angel Haven","variant":"Default",
+            "participants":[90000001],"notes":"concurrency regression"
+        })
+        rid = r.json()["run"]["id"]
+        assert c.post(f"/api/run/{rid}/complete").status_code == 200
+        assert c.post("/api/session/end", json={"loot_value":0,"salvage_value":0,"notes":""}).status_code == 200
+
+    with sqlite3.connect(test_app["work"] / "ratting_tracker.db") as db:
+        sid = db.execute("SELECT id FROM sessions ORDER BY id DESC LIMIT 1").fetchone()[0]
+
+    results = {}
+    gate = threading.Barrier(2)
+
+    def do_delete():
+        gate.wait()
+        with httpx.Client(base_url=base, timeout=10) as c:
+            results["delete"] = c.delete(f"/api/session/{sid}")
+
+    def do_start():
+        gate.wait()
+        time.sleep(0.02)
+        with httpx.Client(base_url=base, timeout=10) as c:
+            results["start"] = c.post("/api/run/start", json={
+                "anomaly":"Angel Hub","variant":"Default",
+                "participants":[90000001],"notes":"after delete"
+            })
+
+    t1=threading.Thread(target=do_delete)
+    t2=threading.Thread(target=do_start)
+    t1.start();t2.start();t1.join();t2.join()
+
+    assert results["delete"].status_code != 500
+    assert results["start"].status_code != 500
+    assert results["start"].status_code in (200,409)
