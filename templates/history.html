@@ -2,16 +2,16 @@
 <body><div class="wrap"><header><div><h1>History & Performance</h1><p class="muted">Sites, sessions, ESS attribution and income trends</p></div>
 <nav class="tabs"><a href="/">Tracker</a><a class="active" href="/history">History</a><a href="/progression">Progression</a></nav>
 <div class="actions"><a class="button secondary" href="/history?days=7">Week</a><a class="button secondary" href="/history?days=30">Month</a></div></header>
-<section class="panel"><div class="panel-head"><h2>{{ days }}-Day Income</h2><span class="muted">Bounty · ESS · Loot · Salvage · Bonuses</span></div><canvas id="chart" height="280"></canvas></section>
+<section class="panel"><div class="panel-head"><h2>{{ days }}-Day Income</h2><span class="muted">Total income trend</span></div><div class="chart-shell"><canvas id="chart" height="280"></canvas><div id="chartTooltip" class="chart-tooltip hidden"></div></div></section>
 
 <section class="panel"><h2>Session History</h2><div class="table-wrap"><table><thead><tr><th>Session</th><th>System(s)</th><th>Sites</th><th>Span</th><th>Bounty</th><th>Loot</th><th>Salvage</th><th>Bonus</th><th>Total</th><th></th></tr></thead>
-<tbody>{% for s in sessions %}<tr id="sessionRow{{ s.id }}"><td>#{{ s.id }}</td><td>{{ s.systems }}</td><td>{{ s.site_count }}</td><td>{{ s.duration_label }}</td><td>{{ "%.2f"|format(s.bounty/1000000) }}m</td><td>{{ "%.2f"|format((s.loot_value or 0)/1000000) }}m</td><td>{{ "%.2f"|format((s.salvage_value or 0)/1000000) }}m</td><td>{{ "%.2f"|format(s.bonus/1000000) }}m</td><td><b>{{ "%.2f"|format(s.total/1000000) }}m</b></td><td><button class="danger tiny" onclick="deleteSession({{ s.id }})">Delete</button></td></tr>{% endfor %}</tbody></table></div></section>
+<tbody>{% for s in sessions %}<tr id="sessionRow{{ s.id }}"><td>#{{ s.id }}</td><td>{{ s.systems }}</td><td>{{ s.site_count }}</td><td>{{ s.duration_label }}</td><td>{{ "%.2f"|format(s.bounty/1000000) }}m</td><td>{{ "%.2f"|format((s.loot_value or 0)/1000000) }}m</td><td>{{ "%.2f"|format((s.salvage_value or 0)/1000000) }}m</td><td>{{ "%.2f"|format(s.bonus/1000000) }}m</td><td><b>{{ "%.2f"|format(s.total/1000000) }}m</b></td><td><div class="inline"><button class="tiny" onclick="editSession({{ s.id }})">Edit</button><button class="danger tiny" onclick="deleteSession({{ s.id }})">Delete</button></div></td></tr>{% endfor %}</tbody></table></div></section>
 
 <section class="panel"><h2>Site History</h2><div class="table-wrap"><table><thead><tr><th>Date</th><th>System</th><th>Anomaly</th><th>Time</th><th>Bounty</th><th>ISK/hr</th><th>Escalation</th><th>Rare</th><th></th></tr></thead>
-<tbody>{% for r in runs %}<tr id="runRow{{ r.id }}"><td>{{ r.ended_at[:16].replace("T"," ") if r.ended_at else "—" }}</td><td>{{ r.system_name or "—" }}</td><td><b>{{ r.anomaly }}</b>{% if r.variant %}<small>{{ r.variant }}</small>{% endif %}</td><td>{{ r.duration_label }}</td><td>{{ "%.2f"|format(r.combined_bounty/1000000) }}m</td><td>{{ "%.2f"|format(r.isk_hr/1000000) }}m</td><td>{% if r.escalation_name %}{{ r.escalation_status or "Pending" }} · {{ r.escalation_name }}{% else %}—{% endif %}</td><td>{{ r.rare_spawn_type or "—" }}</td><td><div class="inline"><button class="tiny" onclick="editRun({{ r.id }})">Edit</button><button class="danger tiny" onclick="deleteRun({{ r.id }})">Delete</button></div></td></tr>{% endfor %}</tbody></table></div></section>
+<tbody>{% for r in runs %}<tr id="runRow{{ r.id }}"><td>{{ r.ended_at[:16].replace("T"," ") if r.ended_at else "—" }}</td><td>{{ r.system_name or "—" }}</td><td><b>{{ r.anomaly }}</b>{% if r.variant %}<small>{{ r.variant }}</small>{% endif %}</td><td>{{ r.duration_label }}</td><td>{{ "%.2f"|format(r.combined_bounty/1000000) }}m</td><td>{{ "%.2f"|format(r.isk_hr/1000000) }}m</td><td>{% if r.escalation_name %}{{ r.escalation_status or "Pending" }} · {{ r.escalation_name }}{% if r.escalation_sale_value %}<small>Value: {{ "%.2f"|format(r.escalation_sale_value/1000000) }}m ISK</small>{% endif %}{% else %}—{% endif %}</td><td>{% if r.rare_spawn_type %}{{ r.rare_spawn_type }}{% if r.rare_spawn_value %}<small>{{ "%.2f"|format(r.rare_spawn_value/1000000) }}m ISK</small>{% endif %}{% else %}—{% endif %}</td><td><div class="inline"><button class="tiny" onclick="editRun({{ r.id }})">Edit</button><button class="danger tiny" onclick="deleteRun({{ r.id }})">Delete</button></div></td></tr>{% endfor %}</tbody></table></div></section>
 
-<section class="panel"><h2>ESS Payments</h2><p class="hint">ESS stays separate from bounty. Auto-match is conservative; change attribution here when needed.</p>
-<div class="table-wrap"><table><thead><tr><th>Date</th><th>Amount</th><th>Character ID</th><th>Attribution</th><th>Change</th></tr></thead><tbody>{% for e in ess %}<tr><td>{{ e.date[:16].replace("T"," ") }}</td><td>{{ "%.2f"|format(e.amount/1000000) }}m</td><td>{{ e.character_id }}</td><td>{{ ("Session #" ~ e.session_id ~ " (" ~ e.match_status ~ ")") if e.session_id else "Unassigned" }}</td><td><form class="inline" method="post" action="/ess/{{ e.entry_id }}/assign"><select name="session_id"><option value="">Unassigned</option>{% for s in all_sessions %}<option value="{{ s.id }}" {% if e.session_id==s.id %}selected{% endif %}>Session #{{ s.id }}</option>{% endfor %}</select><button>Save</button></form></td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><h2>ESS Payments</h2><p class="hint">ESS payment history remains separate from bounty.</p>
+<div class="table-wrap"><table><thead><tr><th>Date</th><th>Amount</th><th>Character</th></tr></thead><tbody>{% for e in ess %}<tr><td>{{ e.date[:16].replace("T"," ") }}</td><td>{{ "%.2f"|format(e.amount/1000000) }}m</td><td>{{ e.character_name }}</td></tr>{% else %}<tr><td colspan="3" class="empty">No ESS payments yet.</td></tr>{% endfor %}</tbody></table></div></section>
 </div>
 <div id="modalBackdrop" class="modal-backdrop hidden"><div class="modal" id="modalContent"></div></div>
 <script>window.CHART_DATA={{ chart_data|safe }};</script><script src="/static/history.js"></script>
@@ -63,6 +63,28 @@ async function saveEditedRun(id){
    alert("Could not save changes: "+err.message);
    if(btn){btn.disabled=false;btn.textContent="Save Changes";}
  }
+}
+async function editSession(id){
+ const r=await fetch(`/api/session/${id}`),j=await r.json();
+ if(!r.ok){alert(j.error||"Could not load session.");return;}
+ const x=j.session;
+ document.getElementById("modalContent").innerHTML=`<div class="modal-head"><div><span class="eyebrow">Edit session</span><h2>Session #${id}</h2></div><button class="icon-btn" onclick="hideHistModal()">×</button></div>
+ <div class="details-grid">
+ <label>Loot value<input id="sLoot" class="isk-input" inputmode="numeric" value="${moneyVal(x.loot_value)?Number(x.loot_value).toLocaleString("en-US"):""}"></label>
+ <label>Salvage value<input id="sSalvage" class="isk-input" inputmode="numeric" value="${moneyVal(x.salvage_value)?Number(x.salvage_value).toLocaleString("en-US"):""}"></label>
+ <label class="full">Session note<input id="sNotes" value="${x.notes||""}"></label></div>
+ <div class="modal-actions"><button id="sessionSaveBtn" class="good big" onclick="saveEditedSession(${id})">Save Changes</button></div>`;
+ bindIskMask(document.getElementById("sLoot"));bindIskMask(document.getElementById("sSalvage"));showHistModal();
+}
+async function saveEditedSession(id){
+ const btn=document.getElementById("sessionSaveBtn");if(btn){btn.disabled=true;btn.textContent="Saving…";}
+ const body={loot_value:rawIsk(document.getElementById("sLoot").value),salvage_value:rawIsk(document.getElementById("sSalvage").value),notes:document.getElementById("sNotes").value||""};
+ try{
+  const r=await fetch(`/api/session/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  let j={};try{j=await r.json()}catch{}
+  if(!r.ok)throw new Error(j.error||`Save failed (${r.status})`);
+  location.reload();
+ }catch(err){alert("Could not save session: "+err.message);if(btn){btn.disabled=false;btn.textContent="Save Changes";}}
 }
 async function deleteRun(id){
  if(!confirm("Delete this run? This cannot be undone."))return;
