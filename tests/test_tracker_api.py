@@ -90,3 +90,20 @@ def test_invalid_start_is_rejected_without_creating_run(test_app):
         })
         assert r.status_code == 400
         assert c.get("/api/dashboard").json()["active"] is None
+
+
+def test_dashboard_exposes_esi_sync_health(test_app):
+    import sqlite3
+    db = test_app["work"] / "ratting_tracker.db"
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "UPDATE esi_sync_state SET last_attempt=?,last_success=?,last_error=?,next_check=? WHERE id=1",
+            ("2026-09-05T12:00:00+00:00", "2026-09-05T11:30:00+00:00",
+             "simulated ESI outage", "2026-09-05T12:30:00+00:00"),
+        )
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        e = c.get("/api/dashboard").json()["esi"]
+        assert e["interval_minutes"] == 30
+        assert e["last_error"] == "simulated ESI outage"
+        assert e["last_success"] == "2026-09-05T11:30:00+00:00"
+        assert e["next_check"] == "2026-09-05T12:30:00+00:00"
