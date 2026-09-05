@@ -205,7 +205,7 @@ function showQuickResult(run,escalations,bountyPending){
   <div id="rareFields" class="conditional hidden"><select id="rareType"><option>Commander</option><option>Dreadnought</option><option>Titan</option><option>Other</option></select></div>
  </div>
  <details><summary>Optional details now</summary><div class="details-grid"><label>Escalation sale value<input id="escValue" class="isk-input" inputmode="numeric" value=""></label><label>Rare loot/value<input id="rareValue" class="isk-input" inputmode="numeric" value=""></label><label class="full">Note<input id="bonusNote"></label></div></details>
- <div class="modal-actions"><button id="saveNext" class="good big">Save & Next Site</button><button id="skipNext" class="secondary">No bonus · Next Site</button></div>`;
+ <div class="modal-actions"><button id="saveNext" class="good big">Save & Next Site</button></div>`;
  bindIskMask($("#escValue")); bindIskMask($("#rareValue"));
  $("#gotEsc").onchange=e=>$("#escFields").classList.toggle("hidden",!e.target.checked);
  $("#gotRare").onchange=e=>$("#rareFields").classList.toggle("hidden",!e.target.checked);
@@ -215,25 +215,23 @@ function showQuickResult(run,escalations,bountyPending){
  showModal();
 }
 async function finishResult(save,id){
- if(save){
-  const btn=$("#saveNext"); if(btn){btn.disabled=true;btn.textContent="Saving…";}
-  const payload={
-   escalation_name:$("#gotEsc").checked?$("#escName").value:"",
-   escalation_status:$("#gotEsc").checked?$("#escStatus").value:"",
-   escalation_sale_value:rawIsk($("#escValue").value),
-   rare_spawn_type:$("#gotRare").checked?$("#rareType").value:"",
-   rare_spawn_value:rawIsk($("#rareValue").value),
-   notes:$("#bonusNote").value||""
-  };
-  try{
-   const r=await fetch(`/api/run/${id}/bonus`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-   let j={}; try{j=await r.json()}catch{}
-   if(!r.ok)throw new Error(j.error||`Save failed (${r.status})`);
-  }catch(err){
-   alert("Could not save site result: "+err.message);
-   if(btn){btn.disabled=false;btn.textContent="Save & Next Site";}
-   return;
-  }
+ const btn=$("#saveNext"); if(btn){btn.disabled=true;btn.textContent="Saving…";}
+ const payload={
+  escalation_name:$("#gotEsc").checked?$("#escName").value:"",
+  escalation_status:$("#gotEsc").checked?$("#escStatus").value:"",
+  escalation_sale_value:rawIsk($("#escValue").value),
+  rare_spawn_type:$("#gotRare").checked?$("#rareType").value:"",
+  rare_spawn_value:rawIsk($("#rareValue").value),
+  notes:$("#bonusNote").value||""
+ };
+ try{
+  const r=await fetch(`/api/run/${id}/bonus`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  let j={}; try{j=await r.json()}catch{}
+  if(!r.ok)throw new Error(j.error||`Save failed (${r.status})`);
+ }catch(err){
+  alert("Could not save site result: "+err.message);
+  if(btn){btn.disabled=false;btn.textContent="Save & Next Site";}
+  return;
  }
  hideModal();await refreshDashboard();setStatus("Local data saved ✓ · ESI pending");
 }
