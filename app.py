@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
+APP_VERSION="8.0.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -35,7 +36,7 @@ ESCALATIONS={
 "Angel Haven":["Angel Cartel Naval Shipyard","Angel Capital Staging","Angel Shielded Starbase","Angel Occupied Mine"],
 "Angel Sanctum":["Angel Shielded Starbase","Angel Capital Staging","Angel Naval Shipyard","Angel Occupied Mine"]}
 
-app=FastAPI(title="EVE Ratting Tracker")
+app=FastAPI(title="EVE Ratting Tracker",version=APP_VERSION)
 app.mount("/static",StaticFiles(directory=BASE_DIR/"static"),name="static")
 templates=Jinja2Templates(directory=BASE_DIR/"templates")
 DB=BASE_DIR/"ratting_tracker.db"
