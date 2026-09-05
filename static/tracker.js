@@ -36,6 +36,14 @@ function relativeFuture(v){
 function renderEsiStatus(){
  const e=DATA.esi||{}, pending=Number(e.pending_runs||0);
  const last=e.last_success||e.last_sync;
+ if(e.configured===false){
+   $("#systemStatus").textContent="ESI: Not configured · Local tracker ready";
+   const a=$("#esiAlert");
+   a.textContent="";a.title="";a.classList.add("hidden");
+   const sync=$("#syncBtn"); if(sync){sync.disabled=true;sync.title="Connect/configure EVE first to use ESI";}
+   return;
+ }
+ const sync=$("#syncBtn"); if(sync){sync.disabled=false;sync.title="";}
  let next=e.next_check;
  if(!next && last){
    const d=new Date(last);d.setMinutes(d.getMinutes()+Number(e.interval_minutes||30));next=d.toISOString();
