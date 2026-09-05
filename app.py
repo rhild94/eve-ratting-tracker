@@ -1,5 +1,5 @@
 
-import os,time,json,base64,sqlite3,secrets,asyncio,re,hashlib
+import os,time,json,base64,sqlite3,secrets,asyncio,re,hashlib,threading
 from datetime import datetime,timezone,timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -39,13 +39,32 @@ ESCALATIONS={
 app=FastAPI(title="EVE Ratting Tracker",version=APP_VERSION)
 app.mount("/static",StaticFiles(directory=BASE_DIR/"static"),name="static")
 templates=Jinja2Templates(directory=BASE_DIR/"templates")
-DB=BASE_DIR/"ratting_tracker.db"
+DB=Path(os.getenv("TRACKER_DB_PATH",str(BASE_DIR/"ratting_tracker.db")))
+DB.parent.mkdir(parents=True,exist_ok=True)
+DB_PROCESS_LOCK=threading.RLock()
+APP_ACCESS_KEY=os.getenv("APP_ACCESS_KEY","").strip()
+ACCESS_COOKIE_VALUE=hashlib.sha256(("eve-ratting-tracker:"+APP_ACCESS_KEY).encode()).hexdigest() if APP_ACCESS_KEY else ""
 
-def db():
-    c=sqlite3.connect(DB,timeout=30)
-    c.row_factory=sqlite3.Row
-    c.execute("PRAGMA busy_timeout=5000")
-    return c
+class LockedDB:
+    def __enter__(self):
+        DB_PROCESS_LOCK.acquire()
+        try:
+            self.conn=sqlite3.connect(DB,timeout=30)
+            self.conn.row_factory=sqlite3.Row
+            self.conn.execute("PRAGMA busy_timeout=5000")
+            self.conn.__enter__()
+            return self.conn
+        except Exception:
+            DB_PROCESS_LOCK.release()
+            raise
+    def __exit__(self,exc_type,exc,tb):
+        try:
+            return self.conn.__exit__(exc_type,exc,tb)
+        finally:
+            self.conn.close()
+            DB_PROCESS_LOCK.release()
+
+def db(): return LockedDB()
 def col_exists(c,t,col): return any(r["name"]==col for r in c.execute(f"PRAGMA table_info({t})"))
 def ensure_col(c,t,d):
     if not col_exists(c,t,d.split()[0]): c.execute(f"ALTER TABLE {t} ADD COLUMN {d}")
@@ -72,6 +91,25 @@ INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1);
         for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT"]:
             ensure_col(c,"characters",d)
 init_db()
+
+@app.middleware("http")
+async def access_gate(request:Request,call_next):
+    if not APP_ACCESS_KEY or request.url.path in {"/access","/health"} or request.url.path.startswith("/static/"):
+        return await call_next(request)
+    if secrets.compare_digest(request.cookies.get("tracker_access",""),ACCESS_COOKIE_VALUE):
+        return await call_next(request)
+    return HTMLResponse("""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVE Ratting Tracker</title></head><body style="font-family:system-ui;background:#08111d;color:#e7edf7;display:grid;place-items:center;min-height:100vh"><form method="post" action="/access" style="width:min(420px,90vw);padding:28px;border:1px solid #27415c;border-radius:12px;background:#0d1928"><h2>EVE Ratting Tracker</h2><p>Enter the private access key.</p><input type="password" name="key" autofocus style="box-sizing:border-box;width:100%;padding:12px;margin:12px 0;background:#07111c;color:white;border:1px solid #34506e;border-radius:7px"><button style="padding:10px 16px">Open tracker</button></form></body></html>""",401)
+
+@app.post("/access")
+async def access_login(key:str=Form("")):
+    if not APP_ACCESS_KEY or not secrets.compare_digest(key,APP_ACCESS_KEY):
+        return HTMLResponse("Invalid access key.",401)
+    r=RedirectResponse("/",303)
+    r.set_cookie("tracker_access",ACCESS_COOKIE_VALUE,httponly=True,samesite="lax",secure=True,max_age=60*60*24*30)
+    return r
+
+@app.get("/health")
+async def health(): return {"ok":True,"version":APP_VERSION}
 
 def utcnow(): return datetime.now(timezone.utc)
 def iso(d=None): return (d or utcnow()).isoformat()
