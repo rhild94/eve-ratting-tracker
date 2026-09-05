@@ -69,7 +69,16 @@ def test_app(tmp_path_factory):
     )
     base_url = f"http://127.0.0.1:{port}"
     try:
-        wait_for_server(base_url)
+        try:
+            wait_for_server(base_url)
+        except Exception as exc:
+            proc.terminate()
+            try:
+                output, _ = proc.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                output, _ = proc.communicate()
+            raise RuntimeError(f"{exc}\n--- app.py output ---\n{output}") from exc
         db = work / "ratting_tracker.db"
         now = "2026-09-05T12:00:00+00:00"
         with sqlite3.connect(db) as c:
