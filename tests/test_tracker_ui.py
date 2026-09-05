@@ -113,5 +113,23 @@ def test_esi_health_warning_is_compact_and_visible(page):
     }""")
     expect(page.locator("#esiAlert")).to_be_visible()
     expect(page.locator("#esiAlert")).to_contain_text("ESI-based values may be stale")
-    expect(page.locator("#systemStatus")).to_contain_text("Next check")
+    expect(page.locator(".esi-stack #systemStatus")).to_contain_text("Next check")
     expect(page.locator("#systemStatus")).to_contain_text("2 runs pending bounty data")
+
+
+def test_history_delete_removes_run_without_hanging(page):
+    start_site(page)
+    complete_site(page)
+    page.click("#skipNext")
+    expect(page.locator("#trackerContent")).to_contain_text("Start Site")
+    page.goto(page.url.rstrip("/") + "/history")
+    page.on("dialog", lambda dialog: dialog.accept())
+    row = page.locator("tr[id^='runRow']").first
+    expect(row).to_be_visible()
+    row.locator("button:has-text('Delete')").click()
+    expect(row).to_have_count(0)
+
+
+def test_esi_status_stays_below_sync_button(page):
+    expect(page.locator(".esi-stack #syncBtn")).to_be_visible()
+    expect(page.locator(".esi-stack #systemStatus")).to_be_visible()
