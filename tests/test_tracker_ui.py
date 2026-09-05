@@ -37,8 +37,8 @@ def test_timer_pause_and_resume(page):
     assert page.locator("#timer").inner_text() == paused
     page.click("#pauseBtn")
     expect(page.locator("#pauseBtn")).to_contain_text("Pause Timer")
-    time.sleep(1.15)
-    assert page.locator("#timer").inner_text() != paused or before != paused
+    time.sleep(2.2)
+    assert page.locator("#timer").inner_text() != paused
 
 
 def test_escalation_sale_value_is_saved_from_completion_modal(page):
@@ -47,6 +47,7 @@ def test_escalation_sale_value_is_saved_from_completion_modal(page):
     page.check("#gotEsc")
     page.select_option("#escName", index=1)
     page.select_option("#escStatus", label="Sold")
+    page.click("summary:has-text('Optional details now')")
     page.fill("#escValue", "123456789")
     expect(page.locator("#escValue")).to_have_value("123,456,789")
     page.click("#saveNext")
