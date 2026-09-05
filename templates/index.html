@@ -4,11 +4,10 @@
 <header>
 <div><h1>◉ Ratting Tracker</h1><p class="muted">Fast anomaly workflow</p></div>
 <nav class="tabs"><a class="active" href="/">Tracker</a><a href="/history">History</a><a href="/progression">Progression</a></nav>
-<div class="actions"><button id="syncBtn" class="secondary">↻ Sync ESI</button><a class="button" href="/login">+ Connect Character</a></div>
+<div class="actions header-actions"><div class="esi-stack"><button id="syncBtn" class="secondary">↻ Sync ESI</button><span id="systemStatus" class="esi-status muted"></span><div id="esiAlert" class="esi-alert hidden"></div></div><a class="button" href="/login">+ Connect Character</a></div>
 </header>
 
 {% if not config_ok %}<div class="warning"><b>Configuration missing.</b> Check your existing <code>.env</code>.</div>{% endif %}
-<div id="esiAlert" class="esi-alert hidden"></div>
 
 <section class="cards">
 <div class="card"><span>Today's Bounty</span><b id="statBounty">0m</b></div>
@@ -20,7 +19,7 @@
 <div id="sessionStrip"></div>
 
 <section class="panel tracker-panel">
-<div class="panel-head"><div><h2>Site Tracker</h2><span id="systemStatus" class="muted"></span></div><span id="saveStatus" class="muted"></span></div>
+<div class="panel-head"><div><h2>Site Tracker</h2></div><span id="saveStatus" class="muted"></span></div>
 <div id="trackerContent"></div>
 </section>
 
