@@ -47,7 +47,6 @@ def test_escalation_sale_value_is_saved_from_completion_modal(page):
     page.check("#gotEsc")
     page.select_option("#escName", index=1)
     page.select_option("#escStatus", label="Sold")
-    page.click("summary:has-text('Optional details now')")
     page.fill("#escValue", "123456789")
     expect(page.locator("#escValue")).to_have_value("123,456,789")
     page.click("#saveNext")
@@ -159,7 +158,6 @@ def test_history_shows_escalation_sale_value(page):
     page.check("#gotEsc")
     page.select_option("#escName", index=1)
     page.select_option("#escStatus", label="Sold")
-    page.click("summary:has-text('Optional details now')")
     page.fill("#escValue", "30000000")
     page.click("#saveNext")
     page.goto(page.url.rstrip("/") + "/history")
@@ -196,3 +194,38 @@ def test_history_income_chart_has_hover_tooltip(page):
     page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5)
     # Tooltip appears when cursor is near a plotted date; canvas logic is covered by existence and JS execution.
     expect(page.locator("#chartTooltip")).to_have_count(1)
+
+
+def test_start_timer_appears_immediately(page):
+    page.select_option("#anomaly", label="Angel Haven")
+    started = time.monotonic()
+    page.click("#startBtn")
+    expect(page.locator("#timer")).to_be_visible(timeout=1000)
+    assert time.monotonic() - started < 3.0
+    expect(page.locator(".starting-cloud, #completeBtn")).to_have_count(1)
+
+
+def test_completion_value_fields_are_conditional(page):
+    start_site(page, "Angel Hub")
+    complete_site(page)
+
+    expect(page.locator("#escValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.check("#gotEsc")
+    expect(page.locator("#escValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.select_option("#escStatus", label="Sold")
+    expect(page.locator("#escValueRow")).not_to_have_class(re.compile(r"\bhidden\b"))
+
+    expect(page.locator("#rareValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.check("#gotRare")
+    expect(page.locator("#rareValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.check("#gotRareLoot")
+    expect(page.locator("#rareValueRow")).not_to_have_class(re.compile(r"\bhidden\b"))
+
+
+def test_character_can_be_designated_main(page):
+    expect(page.locator(".participant-wrap")).to_have_count(1)
+    btn = page.locator(".role-action")
+    if "Set as main" in btn.inner_text():
+        btn.click()
+    expect(page.locator(".role-action.is-main")).to_contain_text("Main")
+    expect(page.locator(".character-copy small")).to_contain_text("Main character")
