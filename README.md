@@ -4,7 +4,7 @@ Private development repository for the EVE Online ratting tracker.
 
 ## Local-first architecture
 
-Ratting actions are saved locally and do not wait for ESI. ESI is used only when explicitly syncing or authorizing a character.
+Ratting actions are saved locally and do not wait for ESI. ESI synchronization runs automatically in the background and can also be triggered manually. Local ratting actions never wait for ESI.
 
 ## Run locally
 
