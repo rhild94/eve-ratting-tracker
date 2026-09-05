@@ -226,3 +226,26 @@ def test_delete_session_and_immediate_start_never_500(test_app):
     assert results["delete"].status_code != 500
     assert results["start"].status_code != 500
     assert results["start"].status_code in (200,409)
+
+
+def test_client_start_time_is_preserved(test_app):
+    from datetime import datetime, timezone
+    started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r = c.post("/api/run/start", json={
+            "anomaly":"Angel Haven","variant":"Default",
+            "participants":[90000001],"notes":"",
+            "client_started_at":started,
+        })
+        assert r.status_code == 200, r.text
+        actual = r.json()["run"]["started_at"]
+        assert actual.startswith(started[:19])
+
+
+def test_main_character_role_endpoint(test_app):
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r = c.post("/api/character/90000001/main")
+        assert r.status_code == 200, r.text
+        chars = c.get("/api/dashboard").json()["characters"]
+        assert chars[0]["id"] == 90000001
+        assert chars[0]["role"] == "main"
