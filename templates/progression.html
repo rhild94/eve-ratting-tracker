@@ -5,7 +5,7 @@
 <div class="progression-grid">
 {% for c in characters %}
 <section class="panel character-full">
-<div class="portrait-head"><img src="{{ c.portrait }}" alt=""><div><h2>{{ c.name }}</h2><div class="sp">{{ "{:,}".format(c.total_sp) }} SP</div><div class="muted">Last snapshot: {{ c.captured_at[:16].replace("T"," ") if c.captured_at else "—" }}</div></div></div>
+<div class="portrait-head"><img src="{{ c.portrait }}" alt=""><div><h2>{{ c.name }}</h2><div class="sp">{{ "{:,}".format(c.total_sp) }} SP</div><div class="muted">Last snapshot: {{ c.captured_at[:16].replace("T"," ") if c.captured_at else "Waiting for ESI sync" }}</div></div></div>{% if not c.has_snapshot %}<div class="warning">No progression snapshot yet. The page will populate after a successful ESI sync.</div>{% endif %}
 {% if c.changes %}<h3>Recent completed skill changes</h3>{% for ch in c.changes %}<div class="change">↑ {{ ch.skill }} {{ ch.from }} → {{ ch.to }}</div>{% endfor %}{% endif %}
 <h3>Training queue</h3>
 <div class="queue-list">{% for q in c.queue %}<div class="queue-row"><span>{{ loop.index }}</span><b>{{ q.skill }}</b><span>Level {{ q.level }}</span><span>{{ q.finish_date[:16].replace("T"," ") if q.finish_date else "Queued" }}</span></div>{% else %}<div class="empty">No queue data.</div>{% endfor %}</div>
