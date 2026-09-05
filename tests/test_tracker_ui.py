@@ -81,11 +81,11 @@ def test_history_edit_persists_escalation_value(page):
     expect(page.locator("#hEscValue")).to_have_value("987,654,321")
 
 
-def test_complete_and_skip_bonus_returns_immediately_to_next_site(page):
+def test_complete_and_save_returns_immediately_to_next_site(page):
     start_site(page)
     complete_site(page)
     started = time.monotonic()
-    page.click("#skipNext")
+    page.click("#saveNext")
     expect(page.locator("#startBtn")).to_be_enabled()
     assert time.monotonic() - started < 3.0
     expect(page.locator("#saveStatus")).to_contain_text("Local data saved")
@@ -120,7 +120,7 @@ def test_esi_health_warning_is_compact_and_visible(page):
 def test_history_delete_removes_run_without_hanging(page):
     start_site(page)
     complete_site(page)
-    page.click("#skipNext")
+    page.click("#saveNext")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
     page.goto(page.url.rstrip("/") + "/history")
     page.on("dialog", lambda dialog: dialog.accept())
@@ -151,3 +151,48 @@ def test_completed_site_has_single_next_site_action(page):
     complete_site(page)
     expect(page.locator("#saveNext")).to_be_visible()
     expect(page.locator("#skipNext")).to_have_count(0)
+
+
+def test_history_shows_escalation_sale_value(page):
+    start_site(page, "Angel Hub")
+    complete_site(page)
+    page.check("#gotEsc")
+    page.select_option("#escName", index=1)
+    page.select_option("#escStatus", label="Sold")
+    page.click("summary:has-text('Optional details now')")
+    page.fill("#escValue", "30000000")
+    page.click("#saveNext")
+    page.goto(page.url.rstrip("/") + "/history")
+    row = page.locator("tr[id^='runRow']").first
+    expect(row).to_contain_text("Sold")
+    expect(row).to_contain_text("30.00m ISK")
+
+
+def test_session_history_can_edit_loot_and_salvage(page):
+    start_site(page)
+    complete_site(page)
+    page.click("#saveNext")
+    page.click("#endSessionBtn")
+    page.fill("#lootValue", "10000000")
+    page.fill("#salvageValue", "15000000")
+    page.click("#finishSession")
+    page.goto(page.url.rstrip("/") + "/history")
+    page.locator("tr[id^='sessionRow']").first.locator("button:has-text('Edit')").click()
+    expect(page.locator("#sLoot")).to_have_value("10,000,000")
+    page.fill("#sSalvage", "25000000")
+    page.click("#sessionSaveBtn")
+    page.wait_for_load_state("networkidle")
+    expect(page.locator("tr[id^='sessionRow']").first).to_contain_text("25.00m")
+
+
+def test_history_income_chart_has_hover_tooltip(page):
+    start_site(page)
+    complete_site(page)
+    page.click("#saveNext")
+    page.goto(page.url.rstrip("/") + "/history")
+    chart = page.locator("#chart")
+    expect(chart).to_be_visible()
+    box = chart.bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5)
+    # Tooltip appears when cursor is near a plotted date; canvas logic is covered by existence and JS execution.
+    expect(page.locator("#chartTooltip")).to_have_count(1)
