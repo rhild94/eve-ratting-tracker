@@ -18,6 +18,39 @@ function bindIskMask(el){
 }
 
 function setStatus(t){$("#saveStatus").textContent=t||"";}
+function relativePast(v){
+ if(!v)return null;
+ const sec=Math.max(0,Math.floor((Date.now()-new Date(v).getTime())/1000));
+ if(sec<60)return "just now";
+ if(sec<3600)return Math.floor(sec/60)+"m ago";
+ if(sec<86400)return Math.floor(sec/3600)+"h ago";
+ return Math.floor(sec/86400)+"d ago";
+}
+function relativeFuture(v){
+ if(!v)return null;
+ const sec=Math.max(0,Math.floor((new Date(v).getTime()-Date.now())/1000));
+ if(sec<60)return "in <1m";
+ if(sec<3600)return "in "+Math.ceil(sec/60)+"m";
+ return "in "+Math.ceil(sec/3600)+"h";
+}
+function renderEsiStatus(){
+ const e=DATA.esi||{}, pending=Number(e.pending_runs||0);
+ const last=e.last_success||e.last_sync;
+ let next=e.next_check;
+ if(!next && last){
+   const d=new Date(last);d.setMinutes(d.getMinutes()+Number(e.interval_minutes||30));next=d.toISOString();
+ }
+ const parts=[last?"Synced "+relativePast(last):"Not synced yet",next?"Next check "+relativeFuture(next):"Auto every "+Number(e.interval_minutes||30)+"m",pending+" run"+(pending===1?"":"s")+" pending bounty data"];
+ $("#systemStatus").textContent="ESI: "+parts.join(" · ");
+ const a=$("#esiAlert");
+ if(e.last_error){
+   a.textContent="⚠ ESI sync issue — ESI-based values may be stale. Local tracker data is safe.";
+   a.title=e.last_error;
+   a.classList.remove("hidden");
+ }else{
+   a.textContent="";a.title="";a.classList.add("hidden");
+ }
+}
 function renderStats(){
  $("#statBounty").textContent=fmtM(DATA.stats.today_isk);
  $("#statEss").textContent=fmtM(DATA.stats.today_ess);
@@ -115,12 +148,20 @@ function renderRecent(){
  </div>`).join("")}</div>`;
 }
 function render(){
- renderStats();renderSession();renderRecent();
+ renderStats();renderSession();renderRecent();renderEsiStatus();
  if(DATA.active)runningView(DATA.active);
  else{$("#trackerContent").innerHTML=startForm();setupVariants();$("#startBtn").addEventListener("click",startRun);}
 }
 async function refreshDashboard(){
  const r=await fetch("/api/dashboard"); if(r.ok){DATA=await r.json();render();}
+}
+async function refreshBackgroundStatus(){
+ try{
+  const r=await fetch("/api/dashboard");if(!r.ok)return;
+  const fresh=await r.json();
+  DATA.esi=fresh.esi;DATA.stats=fresh.stats;DATA.recent=fresh.recent;DATA.session=fresh.session;
+  renderStats();renderRecent();renderSession();renderEsiStatus();
+ }catch{}
 }
 async function startRun(){
  const btn=$("#startBtn");btn.disabled=true;setStatus("Starting…");
@@ -223,5 +264,4 @@ $("#syncBtn").addEventListener("click",async()=>{
  }finally{b.disabled=false;b.textContent="↻ Sync ESI";}
 });
 render();
-if(DATA.esi?.pending_runs) setStatus(`${DATA.esi.pending_runs} completed run${DATA.esi.pending_runs===1?"":"s"} pending ESI sync`);
-
+if(DATA.esi?.pending_runs) setStatus(`${DATA.esi.pending_runs} completed run${DATA.esi.pending_runs===1?"":"s"} pending ESI sync`);\nsetInterval(refreshBackgroundStatus,60000);\n
