@@ -1,6 +1,6 @@
 # EVE Ratting Tracker
 
-**Current version: 8.1.0**
+**Current version: 8.2.0**
 
 Private development repository for the EVE Online ratting tracker.
 
@@ -12,7 +12,7 @@ Ratting actions are saved locally and do not wait for ESI. ESI synchronization r
 
 Extract the package and double-click `RUN_TRACKER.bat`. The launcher creates its own Python environment, installs dependencies, opens the browser, and attempts to import an existing tracker `.env` automatically.
 
-For a truly new installation with no previous config, the app opens a one-time setup page for the public EVE application Client ID. EVE SSO uses PKCE, so a client secret is not required or stored.
+The tracker can run completely without EVE configuration. Local timers, runs, history, sessions, and bonuses are available immediately. If an existing `.env` is found, the launcher imports it automatically; ESI features become available once an EVE Client ID is configured and a character is connected. EVE SSO uses PKCE, so a client secret is not required or stored.
 
 Your runtime `.env`, `.venv`, and `ratting_tracker.db` stay local and are excluded from Git.
 
