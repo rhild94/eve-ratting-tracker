@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.2.1"
+APP_VERSION="8.3.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -148,6 +148,33 @@ async def sys_name(sid):
     try:return (await esi_get(f"/universe/systems/{sid}/")).get("name",str(sid))
     except:return str(sid) if sid else None
 
+async def resolve_type_names(type_ids):
+    ids=sorted({int(x) for x in type_ids if x})
+    if not ids:return {}
+    out={}
+    with db() as c:
+        rows=c.execute(f"SELECT type_id,name FROM type_names WHERE type_id IN ({','.join('?'*len(ids))})",ids).fetchall()
+        out.update({int(r["type_id"]):r["name"] for r in rows})
+    missing=[x for x in ids if x not in out]
+    if missing:
+        try:
+            h={"Accept":"application/json","Content-Type":"application/json","User-Agent":"Rafael-EVE-Ratting-Tracker/8.3","X-Compatibility-Date":COMPAT_DATE}
+            async with httpx.AsyncClient(timeout=15) as cl:
+                r=await cl.post(ESI+"/universe/names/",headers=h,json=missing)
+                r.raise_for_status()
+                data=r.json()
+            with db() as c:
+                for item in data:
+                    tid=int(item.get("id",0));name=item.get("name")
+                    if tid and name:
+                        out[tid]=name
+                        c.execute("INSERT OR REPLACE INTO type_names(type_id,name) VALUES(?,?)",(tid,name))
+        except Exception:
+            pass
+    for tid in ids:out.setdefault(tid,str(tid))
+    return out
+
+
 def auto_match_ess(c,eid,dt):
     cand=c.execute("SELECT id,ended_at FROM sessions WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 8").fetchall()
     p=[]
@@ -198,17 +225,18 @@ def latest(cid):
 
 async def progression(cid,queue_limit=50):
     with db() as c:s=c.execute("SELECT * FROM skill_snapshots WHERE character_id=? ORDER BY id DESC LIMIT 2",(cid,)).fetchall()
-    if not s:return {"total_sp":0,"queue":[],"changes":[]}
-    q=[]
-    for x in json.loads(s[0]["queue_json"])[:queue_limit]:
-        q.append({"skill":await type_name(x.get("skill_id")),"level":x.get("finished_level"),"finish_date":x.get("finish_date"),"start_date":x.get("start_date")})
-    ch=[]
+    if not s:return {"total_sp":0,"queue":[],"changes":[],"captured_at":None,"has_snapshot":False}
+    queue_raw=json.loads(s[0]["queue_json"])[:queue_limit]
+    changes_raw=[]
     if len(s)>1:
         old={x["skill_id"]:x for x in json.loads(s[1]["skills_json"])}
         for cur in json.loads(s[0]["skills_json"]):
             a=int(old.get(cur["skill_id"],{}).get("trained_skill_level",0));b=int(cur.get("trained_skill_level",0))
-            if b>a:ch.append({"skill":await type_name(cur["skill_id"]),"from":a,"to":b})
-    return {"total_sp":s[0]["total_sp"],"queue":q,"changes":ch,"captured_at":s[0]["captured_at"]}
+            if b>a:changes_raw.append((cur["skill_id"],a,b))
+    names=await resolve_type_names([x.get("skill_id") for x in queue_raw]+[x[0] for x in changes_raw])
+    q=[{"skill":names.get(int(x.get("skill_id") or 0),str(x.get("skill_id") or "")),"level":x.get("finished_level"),"finish_date":x.get("finish_date"),"start_date":x.get("start_date")} for x in queue_raw]
+    ch=[{"skill":names.get(int(tid),str(tid)),"from":a,"to":b} for tid,a,b in changes_raw]
+    return {"total_sp":s[0]["total_sp"],"queue":q,"changes":ch,"captured_at":s[0]["captured_at"],"has_snapshot":True}
 
 def active_session(c):return c.execute("SELECT * FROM sessions WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
 def ensure_session(c,st):
@@ -493,6 +521,22 @@ async def api_end_session(request:Request):
             except:pass
     return JSONResponse({"ok":True})
 
+@app.get("/api/session/{sid}")
+async def api_get_session(sid:int):
+    with db() as c:s=c.execute("SELECT * FROM sessions WHERE id=?",(sid,)).fetchone()
+    if not s:return JSONResponse({"ok":False,"error":"Session not found."},404)
+    return JSONResponse({"ok":True,"session":dict(s)})
+
+@app.post("/api/session/{sid}")
+async def api_update_session(sid:int,request:Request):
+    b=await request.json()
+    with db() as c:
+        if not c.execute("SELECT id FROM sessions WHERE id=?",(sid,)).fetchone():
+            return JSONResponse({"ok":False,"error":"Session not found."},404)
+        c.execute("UPDATE sessions SET loot_value=?,salvage_value=?,notes=? WHERE id=?",
+                  (max(0,money(b.get("loot_value"))),max(0,money(b.get("salvage_value"))),(b.get("notes") or "").strip(),sid))
+    return JSONResponse({"ok":True})
+
 @app.delete("/api/session/{sid}")
 async def api_delete_session(sid:int):
     for attempt in range(3):
@@ -515,7 +559,7 @@ async def progression_page(request:Request):
         try:
             p=await progression(x["character_id"],50)
         except Exception:
-            p={"total_sp":0,"queue":[],"changes":[],"captured_at":None}
+            p={"total_sp":0,"queue":[],"changes":[],"captured_at":None,"has_snapshot":False}
         out.append({"id":x["character_id"],"name":x["name"],"portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
     return templates.TemplateResponse(request=request,name="progression.html",context={"characters":out})
 
@@ -525,7 +569,7 @@ async def history(request:Request,days:int=7):
     with db() as c:
         rs=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY ended_at DESC").fetchall()
         ss=c.execute("SELECT * FROM sessions WHERE status='complete' ORDER BY ended_at DESC").fetchall()
-        ess=c.execute("SELECT * FROM ess_events ORDER BY date DESC").fetchall()
+        ess=c.execute("""SELECT e.*,COALESCE(ch.name,CAST(e.character_id AS TEXT)) AS character_name FROM ess_events e LEFT JOIN characters ch ON ch.character_id=e.character_id ORDER BY e.date DESC""").fetchall()
         alls=c.execute("SELECT id FROM sessions WHERE status='complete' ORDER BY id DESC LIMIT 100").fetchall()
     buckets={(start+timedelta(days=i)).isoformat():{"date":(start+timedelta(days=i)).isoformat(),"bounty":0,"ess":0,"loot":0,"salvage":0,"bonus":0} for i in range(days)}
     for r in rs:
