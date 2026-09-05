@@ -127,3 +127,10 @@ def test_delete_completed_run_returns_promptly(test_app):
         assert r.status_code == 200, r.text
         assert elapsed < 2.0
         assert c.get(f"/api/run/{rid}").status_code == 404
+
+
+def test_progression_page_loads_without_snapshots(test_app):
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r = c.get("/progression")
+        assert r.status_code == 200
+        assert "Character Progression" in r.text
