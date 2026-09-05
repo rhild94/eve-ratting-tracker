@@ -1,13 +1,14 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EVE Ratting Tracker V8</title><link rel="stylesheet" href="/static/style.css"></head>
+<title>EVE Ratting Tracker</title><link rel="stylesheet" href="/static/style.css"></head>
 <body><div class="wrap">
 <header>
-<div><h1>◉ Ratting Tracker <small>V8</small></h1><p class="muted">Fast anomaly workflow</p></div>
+<div><h1>◉ Ratting Tracker</h1><p class="muted">Fast anomaly workflow</p></div>
 <nav class="tabs"><a class="active" href="/">Tracker</a><a href="/history">History</a><a href="/progression">Progression</a></nav>
 <div class="actions"><button id="syncBtn" class="secondary">↻ Sync ESI</button><a class="button" href="/login">+ Connect Character</a></div>
 </header>
 
-{% if not config_ok %}<div class="warning"><b>Configuration missing.</b> Check your existing <code>.env</code>.</div>{% endif %}\n<div id="esiAlert" class="esi-alert hidden"></div>
+{% if not config_ok %}<div class="warning"><b>Configuration missing.</b> Check your existing <code>.env</code>.</div>{% endif %}
+<div id="esiAlert" class="esi-alert hidden"></div>
 
 <section class="cards">
 <div class="card"><span>Today's Bounty</span><b id="statBounty">0m</b></div>
