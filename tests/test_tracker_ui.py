@@ -133,3 +133,14 @@ def test_history_delete_removes_run_without_hanging(page):
 def test_esi_status_stays_below_sync_button(page):
     expect(page.locator(".esi-stack #syncBtn")).to_be_visible()
     expect(page.locator(".esi-stack #systemStatus")).to_be_visible()
+
+
+def test_unconfigured_esi_keeps_local_tracker_ready(page):
+    page.evaluate("""() => {
+      DATA.esi.configured = false;
+      DATA.esi.connected_characters = 0;
+      renderEsiStatus();
+    }""")
+    expect(page.locator("#trackerContent")).to_contain_text("Start Site")
+    expect(page.locator(".esi-stack #systemStatus")).to_contain_text("Local tracker ready")
+    expect(page.locator("#syncBtn")).to_be_disabled()
