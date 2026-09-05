@@ -88,6 +88,34 @@ def col_exists(c,t,col):
 def ensure_col(c,t,d):
     if not col_exists(c,t,d.split()[0]):c.execute(f"ALTER TABLE {t} ADD COLUMN {d}")
 def init_db():
+    with db() as c:
+        stmts=[
+            "CREATE TABLE IF NOT EXISTS characters(character_id BIGINT PRIMARY KEY,name TEXT NOT NULL,access_token TEXT NOT NULL,refresh_token TEXT NOT NULL,expires_at BIGINT NOT NULL,connected_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS oauth_states(state TEXT PRIMARY KEY,created_at BIGINT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS skill_snapshots(id BIGSERIAL PRIMARY KEY,character_id BIGINT NOT NULL,captured_at TEXT NOT NULL,total_sp BIGINT NOT NULL,skills_json TEXT NOT NULL,queue_json TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS wallet_entries(entry_id BIGINT PRIMARY KEY,character_id BIGINT NOT NULL,date TEXT NOT NULL,amount DOUBLE PRECISION NOT NULL,balance DOUBLE PRECISION,ref_type TEXT,description TEXT,raw_json TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS runs(id BIGSERIAL PRIMARY KEY,anomaly TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,participants_json TEXT NOT NULL,notes TEXT,status TEXT NOT NULL DEFAULT 'active',combined_bounty DOUBLE PRECISION DEFAULT 0,system_name TEXT,ships_json TEXT)",
+            "CREATE TABLE IF NOT EXISTS type_names(type_id BIGINT PRIMARY KEY,name TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS sessions(id BIGSERIAL PRIMARY KEY,started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL DEFAULT 'active',loot_value DOUBLE PRECISION DEFAULT 0,salvage_value DOUBLE PRECISION DEFAULT 0,notes TEXT)",
+            "CREATE TABLE IF NOT EXISTS ess_events(entry_id BIGINT PRIMARY KEY,character_id BIGINT NOT NULL,date TEXT NOT NULL,amount DOUBLE PRECISION NOT NULL,session_id BIGINT,match_status TEXT NOT NULL DEFAULT 'unassigned')",
+            "CREATE TABLE IF NOT EXISTS esi_cache(cache_key TEXT PRIMARY KEY,payload_json TEXT NOT NULL,expires_at TEXT,updated_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS esi_sync_state(id INTEGER PRIMARY KEY,last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT)"
+        ]
+        if not USE_POSTGRES:
+            stmts=[x.replace("BIGSERIAL PRIMARY KEY","INTEGER PRIMARY KEY AUTOINCREMENT").replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL") for x in stmts]
+        for q in stmts:c.execute(q)
+        if USE_POSTGRES:c.execute("INSERT INTO esi_sync_state(id) VALUES(1) ON CONFLICT(id) DO NOTHING")
+        else:
+            c.execute("INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1)")
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA synchronous=NORMAL")
+        ensure_col(c,"oauth_states","code_verifier TEXT")
+        for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT"]:
+            ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
+        for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT"]:
+            ensure_col(c,"characters",d)
+init_db()
+
 @app.middleware("http")
 async def access_gate(request:Request,call_next):
     if not APP_ACCESS_KEY or request.url.path in {"/access","/health"} or request.url.path.startswith("/static/"):
