@@ -6,6 +6,8 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
+import psycopg
+from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from fastapi import FastAPI,Request,Form
 from fastapi.responses import HTMLResponse,RedirectResponse,JSONResponse
@@ -43,33 +45,71 @@ templates=Jinja2Templates(directory=BASE_DIR/"templates")
 DB=Path(os.getenv("TRACKER_DB_PATH",str(BASE_DIR/"ratting_tracker.db")))
 DB.parent.mkdir(parents=True,exist_ok=True)
 DB_PROCESS_LOCK=threading.RLock()
+DATABASE_URL=os.getenv("DATABASE_URL","").strip()
+USE_POSTGRES=bool(DATABASE_URL)
 APP_ACCESS_KEY=os.getenv("APP_ACCESS_KEY","").strip()
 ACCESS_COOKIE_VALUE=hashlib.sha256(("eve-ratting-tracker:"+APP_ACCESS_KEY).encode()).hexdigest() if APP_ACCESS_KEY else ""
+
+class CompatCursor:
+    def __init__(self,cur,lastrowid=None): self.cur=cur; self.lastrowid=lastrowid
+    def fetchone(self): return self.cur.fetchone()
+    def fetchall(self): return self.cur.fetchall()
+    def __iter__(self): return iter(self.cur)
+
+class PostgresConn:
+    def __init__(self,conn): self.conn=conn
+    def execute(self,sql,params=()):
+        q=sql.replace("?","%s")
+        cur=self.conn.cursor();cur.execute(q,params);return CompatCursor(cur)
+    def __enter__(self): self.conn.__enter__(); return self
+    def __exit__(self,*args): return self.conn.__exit__(*args)
 
 class LockedDB:
     def __enter__(self):
         DB_PROCESS_LOCK.acquire()
         try:
-            self.conn=sqlite3.connect(DB,timeout=30)
-            self.conn.row_factory=sqlite3.Row
-            self.conn.execute("PRAGMA busy_timeout=5000")
-            self.conn.__enter__()
-            return self.conn
+            if USE_POSTGRES:
+                self.raw=psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=10)
+                self.conn=PostgresConn(self.raw)
+            else:
+                self.raw=sqlite3.connect(DB,timeout=30);self.raw.row_factory=sqlite3.Row
+                self.raw.execute("PRAGMA busy_timeout=5000");self.conn=self.raw
+            self.conn.__enter__();return self.conn
         except Exception:
-            DB_PROCESS_LOCK.release()
-            raise
+            DB_PROCESS_LOCK.release();raise
     def __exit__(self,exc_type,exc,tb):
-        try:
-            return self.conn.__exit__(exc_type,exc,tb)
-        finally:
-            self.conn.close()
-            DB_PROCESS_LOCK.release()
+        try:return self.conn.__exit__(exc_type,exc,tb)
+        finally:self.raw.close();DB_PROCESS_LOCK.release()
 
 def db(): return LockedDB()
-def col_exists(c,t,col): return any(r["name"]==col for r in c.execute(f"PRAGMA table_info({t})"))
+def col_exists(c,t,col):
+    if USE_POSTGRES:return bool(c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=? AND column_name=?",(t,col)).fetchone())
+    return any(r["name"]==col for r in c.execute(f"PRAGMA table_info({t})"))
 def ensure_col(c,t,d):
-    if not col_exists(c,t,d.split()[0]): c.execute(f"ALTER TABLE {t} ADD COLUMN {d}")
+    if not col_exists(c,t,d.split()[0]):c.execute(f"ALTER TABLE {t} ADD COLUMN {d}")
 def init_db():
+    with db() as c:
+        stmts=[
+"CREATE TABLE IF NOT EXISTS characters(character_id BIGINT PRIMARY KEY,name TEXT NOT NULL,access_token TEXT NOT NULL,refresh_token TEXT NOT NULL,expires_at BIGINT NOT NULL,connected_at TEXT NOT NULL)",
+"CREATE TABLE IF NOT EXISTS oauth_states(state TEXT PRIMARY KEY,created_at BIGINT NOT NULL)",
+"CREATE TABLE IF NOT EXISTS skill_snapshots(id BIGSERIAL PRIMARY KEY,character_id BIGINT NOT NULL,captured_at TEXT NOT NULL,total_sp BIGINT NOT NULL,skills_json TEXT NOT NULL,queue_json TEXT NOT NULL)",
+"CREATE TABLE IF NOT EXISTS wallet_entries(entry_id BIGINT PRIMARY KEY,character_id BIGINT NOT NULL,date TEXT NOT NULL,amount DOUBLE PRECISION NOT NULL,balance DOUBLE PRECISION,ref_type TEXT,description TEXT,raw_json TEXT NOT NULL)",
+"CREATE TABLE IF NOT EXISTS runs(id BIGSERIAL PRIMARY KEY,anomaly TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,participants_json TEXT NOT NULL,notes TEXT,status TEXT NOT NULL DEFAULT 'active',combined_bounty DOUBLE PRECISION DEFAULT 0,system_name TEXT,ships_json TEXT)",
+"CREATE TABLE IF NOT EXISTS type_names(type_id BIGINT PRIMARY KEY,name TEXT NOT NULL)",
+"CREATE TABLE IF NOT EXISTS sessions(id BIGSERIAL PRIMARY KEY,started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL DEFAULT 'active',loot_value DOUBLE PRECISION DEFAULT 0,salvage_value DOUBLE PRECISION DEFAULT 0,notes TEXT)",
+"CREATE TABLE IF NOT EXISTS ess_events(entry_id BIGINT PRIMARY KEY,character_id BIGINT NOT NULL,date TEXT NOT NULL,amount DOUBLE PRECISION NOT NULL,session_id BIGINT,match_status TEXT NOT NULL DEFAULT 'unassigned')",
+"CREATE TABLE IF NOT EXISTS esi_cache(cache_key TEXT PRIMARY KEY,payload_json TEXT NOT NULL,expires_at TEXT,updated_at TEXT NOT NULL)",
+"CREATE TABLE IF NOT EXISTS esi_sync_state(id INTEGER PRIMARY KEY,last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT)"]
+        if not USE_POSTGRES:stmts=[x.replace("BIGSERIAL PRIMARY KEY","INTEGER PRIMARY KEY AUTOINCREMENT").replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL") for x in stmts]
+        for q in stmts:c.execute(q)
+        if USE_POSTGRES:c.execute("INSERT INTO esi_sync_state(id) VALUES(1) ON CONFLICT(id) DO NOTHING")
+        else:
+            c.execute("INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1)");c.execute("PRAGMA journal_mode=WAL");c.execute("PRAGMA synchronous=NORMAL")
+        ensure_col(c,"oauth_states","code_verifier TEXT")
+        for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT"]:
+            ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
+        for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT"]:ensure_col(c,"characters",d)
+init_db():
     with db() as c:
         c.executescript("""
 CREATE TABLE IF NOT EXISTS characters(character_id INTEGER PRIMARY KEY,name TEXT NOT NULL,access_token TEXT NOT NULL,refresh_token TEXT NOT NULL,expires_at INTEGER NOT NULL,connected_at TEXT NOT NULL);
@@ -180,7 +220,9 @@ async def type_name(tid):
     if r:return r["name"]
     try:
         n=(await esi_get(f"/universe/types/{tid}/")).get("name",str(tid))
-        with db() as c:c.execute("INSERT OR REPLACE INTO type_names VALUES(?,?)",(tid,n))
+        with db() as c:
+            if USE_POSTGRES:c.execute("INSERT INTO type_names(type_id,name) VALUES(?,?) ON CONFLICT(type_id) DO UPDATE SET name=EXCLUDED.name",(tid,n))
+            else:c.execute("INSERT OR REPLACE INTO type_names VALUES(?,?)",(tid,n))
         return n
     except:return str(tid)
 async def sys_name(sid):
@@ -207,7 +249,7 @@ async def resolve_type_names(type_ids):
                     tid=int(item.get("id",0));name=item.get("name")
                     if tid and name:
                         out[tid]=name
-                        c.execute("INSERT OR REPLACE INTO type_names(type_id,name) VALUES(?,?)",(tid,name))
+                        c.execute("INSERT INTO type_names(type_id,name) VALUES(?,?) ON CONFLICT(type_id) DO UPDATE SET name=EXCLUDED.name",(tid,name)) if USE_POSTGRES else c.execute("INSERT OR REPLACE INTO type_names(type_id,name) VALUES(?,?)",(tid,name))
         except Exception:
             pass
     for tid in ids:out.setdefault(tid,str(tid))
@@ -243,9 +285,9 @@ async def sync_character(cid):
         c.execute("INSERT INTO skill_snapshots(character_id,captured_at,total_sp,skills_json,queue_json) VALUES(?,?,?,?,?)",(cid,synced,int(skills.get("total_sp",0)),json.dumps(skills.get("skills",[])),json.dumps(queue)))
         c.execute("UPDATE characters SET cache_system_name=COALESCE(?,cache_system_name),cache_ship_name=COALESCE(?,cache_ship_name),last_esi_sync=? WHERE character_id=?",(cache_system,cache_ship,synced,cid))
         for j in journal:
-            c.execute("INSERT OR IGNORE INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j)))
+            c.execute("INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j)))
             if "ess" in (j.get("ref_type") or "").lower() and money(j.get("amount"))>0:
-                c.execute("INSERT OR IGNORE INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount"))))
+                c.execute("INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?) ON CONFLICT(entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount"))))
                 try:auto_match_ess(c,j.get("id"),parse_iso(j.get("date")))
                 except:pass
 
@@ -281,6 +323,7 @@ def active_session(c):return c.execute("SELECT * FROM sessions WHERE status='act
 def ensure_session(c,st):
     s=active_session(c)
     if s:return s["id"]
+    if USE_POSTGRES:return c.execute("INSERT INTO sessions(started_at,status) VALUES(?,'active') RETURNING id",(st,)).fetchone()["id"]
     return c.execute("INSERT INTO sessions(started_at,status) VALUES(?,'active')",(st,)).lastrowid
 
 def cached_run_context(pids):
@@ -463,7 +506,7 @@ async def api_start_run(request:Request):
     with db() as c:
         if c.execute("SELECT 1 FROM runs WHERE status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
         sid=ensure_session(c,st)
-        rid=c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid
+        rid=(c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL) RETURNING id",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).fetchone()["id"] if USE_POSTGRES else c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid)
         run=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
     return JSONResponse({"ok":True,"run":enrich(run),"session_id":sid})
 
@@ -517,9 +560,9 @@ async def api_save_bonus(rid:int,request:Request):
                     if not exists:return JSONResponse({"ok":False,"error":"Run not found."},404)
                     c.execute("""UPDATE runs SET escalation_name=?,escalation_status=?,escalation_sale_value=?,rare_spawn_type=?,rare_spawn_name=?,rare_spawn_value=?,notes=? WHERE id=?""",values)
                 return JSONResponse({"ok":True})
-            except sqlite3.OperationalError as e:
+            except (sqlite3.OperationalError,psycopg.OperationalError) as e:
                 last_error=e
-                if "locked" not in str(e).lower():raise
+                if USE_POSTGRES or "locked" not in str(e).lower():raise
                 time.sleep(.25)
         return JSONResponse({"ok":False,"error":f"Database was busy: {last_error}"},503)
     except Exception as e:
@@ -541,8 +584,8 @@ async def api_delete_run(rid:int):
                 if not r:return JSONResponse({"ok":False,"error":"Run not found."},404)
                 c.execute("DELETE FROM runs WHERE id=?",(rid,))
             return JSONResponse({"ok":True})
-        except sqlite3.OperationalError as e:
-            if "locked" not in str(e).lower():raise
+        except (sqlite3.OperationalError,psycopg.OperationalError) as e:
+            if USE_POSTGRES or "locked" not in str(e).lower():raise
             if attempt==2:return JSONResponse({"ok":False,"error":"Database is busy with an ESI update. Try again in a moment."},503)
             await asyncio.sleep(.15)
 
@@ -585,8 +628,8 @@ async def api_delete_session(sid:int):
                 c.execute("DELETE FROM runs WHERE session_id=?",(sid,))
                 c.execute("DELETE FROM sessions WHERE id=?",(sid,))
             return JSONResponse({"ok":True})
-        except sqlite3.OperationalError as e:
-            if "locked" not in str(e).lower():raise
+        except (sqlite3.OperationalError,psycopg.OperationalError) as e:
+            if USE_POSTGRES or "locked" not in str(e).lower():raise
             if attempt==2:return JSONResponse({"ok":False,"error":"Database is busy with an ESI update. Try again in a moment."},503)
             await asyncio.sleep(.15)
 
