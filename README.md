@@ -1,6 +1,6 @@
 # EVE Ratting Tracker
 
-**Current version: 8.2.0**
+**Current version: 8.2.1**
 
 Private development repository for the EVE Online ratting tracker.
 
