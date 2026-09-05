@@ -1,0 +1,26 @@
+# EVE Ratting Tracker
+
+Private development repository for the EVE Online ratting tracker.
+
+## Local-first architecture
+
+Ratting actions are saved locally and do not wait for ESI. ESI is used only when explicitly syncing or authorizing a character.
+
+## Run locally
+
+```bash
+python -m pip install -r requirements.txt
+python app.py
+```
+
+Keep your real `.env` and `ratting_tracker.db` local. They are excluded from Git.
+
+## Automated tests
+
+```bash
+python -m pip install -r requirements.txt -r requirements-test.txt
+python -m playwright install chromium
+python -m pytest tests -v
+```
+
+GitHub Actions runs the API and browser regression suite automatically for every push to `main` and for pull requests.
