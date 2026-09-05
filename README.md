@@ -1,5 +1,7 @@
 # EVE Ratting Tracker
 
+**Current version: 8.0.0**
+
 Private development repository for the EVE Online ratting tracker.
 
 ## Local-first architecture
