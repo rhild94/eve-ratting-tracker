@@ -87,7 +87,7 @@ def col_exists(c,t,col):
     return any(r["name"]==col for r in c.execute(f"PRAGMA table_info({t})"))
 def ensure_col(c,t,d):
     if not col_exists(c,t,d.split()[0]):c.execute(f"ALTER TABLE {t} ADD COLUMN {d}")
-def init_db()
+def init_db():
 @app.middleware("http")
 async def access_gate(request:Request,call_next):
     if not APP_ACCESS_KEY or request.url.path in {"/access","/health"} or request.url.path.startswith("/static/"):
