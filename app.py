@@ -333,7 +333,7 @@ async def callback(code:str,state:str):
     async with httpx.AsyncClient(timeout=30) as cl:
         r=await cl.post(SSO_TOKEN,auth=auth,data=data);r.raise_for_status();t=r.json()
     cid=charid(t["access_token"]);pub=await esi_get(f"/characters/{cid}/")
-    with db() as c:c.execute("""INSERT INTO characters VALUES(?,?,?,?,?,?) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso()))
+    with db() as c:c.execute("""INSERT INTO characters(character_id,name,access_token,refresh_token,expires_at,connected_at) VALUES(?,?,?,?,?,?) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso()))
     await sync_character(cid)
     return RedirectResponse("/",302)
 
