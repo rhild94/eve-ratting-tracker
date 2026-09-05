@@ -274,7 +274,7 @@ async def dashboard_payload():
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
     payload=await dashboard_payload()
-    return templates.TemplateResponse("index.html",{"request":request,"data":payload,"config_ok":bool(CLIENT_ID and CLIENT_SECRET)})
+    return templates.TemplateResponse(request=request,name="index.html",context={"data":payload,"config_ok":bool(CLIENT_ID and CLIENT_SECRET)})
 
 @app.get("/api/dashboard")
 async def api_dashboard(): return JSONResponse(await dashboard_payload())
@@ -462,7 +462,7 @@ async def progression_page(request:Request):
     for x in chars:
         p=await progression(x["character_id"],50)
         out.append({"id":x["character_id"],"name":x["name"],"portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
-    return templates.TemplateResponse("progression.html",{"request":request,"characters":out})
+    return templates.TemplateResponse(request=request,name="progression.html",context={"characters":out})
 
 @app.get("/history",response_class=HTMLResponse)
 async def history(request:Request,days:int=7):
@@ -486,7 +486,7 @@ async def history(request:Request,days:int=7):
     for e in ess:
         k=parse_iso(e["date"]).date().isoformat()
         if k in buckets:buckets[k]["ess"]+=money(e["amount"])
-    return templates.TemplateResponse("history.html",{"request":request,"days":days,"runs":[enrich(r) for r in rs[:200]],"sessions":sess[:100],"ess":[dict(e) for e in ess[:100]],"all_sessions":[dict(s) for s in alls],"chart_data":json.dumps(list(buckets.values()))})
+    return templates.TemplateResponse(request=request,name="history.html",context={"days":days,"runs":[enrich(r) for r in rs[:200]],"sessions":sess[:100],"ess":[dict(e) for e in ess[:100]],"all_sessions":[dict(s) for s in alls],"chart_data":json.dumps(list(buckets.values()))})
 
 @app.post("/ess/{eid}/assign")
 async def assign_ess(eid:int,session_id:str=Form("")):
