@@ -1,0 +1,22 @@
+# Local secrets and runtime data
+.env
+ratting_tracker.db
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Test artifacts
+test-results/
+playwright-report/
+test-results-*/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
