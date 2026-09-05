@@ -35,7 +35,7 @@ ESCALATIONS={
 "Angel Haven":["Angel Cartel Naval Shipyard","Angel Capital Staging","Angel Shielded Starbase","Angel Occupied Mine"],
 "Angel Sanctum":["Angel Shielded Starbase","Angel Capital Staging","Angel Naval Shipyard","Angel Occupied Mine"]}
 
-app=FastAPI(title="EVE Ratting Tracker V8")
+app=FastAPI(title="EVE Ratting Tracker")
 app.mount("/static",StaticFiles(directory=BASE_DIR/"static"),name="static")
 templates=Jinja2Templates(directory=BASE_DIR/"templates")
 DB=BASE_DIR/"ratting_tracker.db"
