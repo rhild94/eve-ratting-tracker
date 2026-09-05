@@ -107,8 +107,6 @@ def init_db():
         if USE_POSTGRES:c.execute("INSERT INTO esi_sync_state(id) VALUES(1) ON CONFLICT(id) DO NOTHING")
         else:
             c.execute("INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1)")
-            c.execute("PRAGMA journal_mode=WAL")
-            c.execute("PRAGMA synchronous=NORMAL")
         ensure_col(c,"oauth_states","code_verifier TEXT")
         for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT"]:
             ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
