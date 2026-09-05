@@ -64,7 +64,7 @@ def test_escalation_sale_value_is_saved_from_completion_modal(page):
 def test_history_edit_persists_escalation_value(page):
     start_site(page)
     complete_site(page)
-    page.click("#skipNext")
+    page.click("#saveNext")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
 
     page.goto(page.url.rstrip("/") + "/history")
@@ -144,3 +144,10 @@ def test_unconfigured_esi_keeps_local_tracker_ready(page):
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
     expect(page.locator(".esi-stack #systemStatus")).to_contain_text("Local tracker ready")
     expect(page.locator("#syncBtn")).to_be_disabled()
+
+
+def test_completed_site_has_single_next_site_action(page):
+    start_site(page)
+    complete_site(page)
+    expect(page.locator("#saveNext")).to_be_visible()
+    expect(page.locator("#skipNext")).to_have_count(0)
