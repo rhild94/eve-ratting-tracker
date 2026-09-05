@@ -40,7 +40,7 @@ jobs:
         if: success()
         run: |
           mkdir -p release/eve-ratting-tracker
-          cp app.py requirements.txt README.md release/eve-ratting-tracker/
+          cp app.py launcher.py RUN_TRACKER.bat requirements.txt README.md VERSION .env.example release/eve-ratting-tracker/
           cp -r static templates release/eve-ratting-tracker/
           cd release
           zip -r eve-ratting-tracker.zip eve-ratting-tracker
