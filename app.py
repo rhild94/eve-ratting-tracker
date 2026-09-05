@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.3.0"
+APP_VERSION="8.4.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -110,7 +110,7 @@ def init_db():
         ensure_col(c,"oauth_states","code_verifier TEXT")
         for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT"]:
             ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
-        for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT"]:
+        for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT","character_role TEXT DEFAULT 'alt'"]:
             ensure_col(c,"characters",d)
 init_db()
 
@@ -345,11 +345,11 @@ def enrich(r):
 
 async def dashboard_payload():
     with db() as c:
-        chars=c.execute("SELECT character_id,name FROM characters ORDER BY connected_at").fetchall()
+        chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
         ar=c.execute("SELECT * FROM runs WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
         recent=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 12").fetchall()
         ses=active_session(c); sr=c.execute("SELECT * FROM runs WHERE session_id=? ORDER BY id",(ses["id"],)).fetchall() if ses else []
-    characters=[{"id":x["character_id"],"name":x["name"],"portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=64"} for x in chars]
+    characters=[{"id":x["character_id"],"name":x["name"],"role":x["character_role"] or "alt","portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=64"} for x in chars]
     today=utcnow().date(); stats={"today_isk":0,"today_sites":0,"today_seconds":0,"today_ess":0}
     for r in recent:
         if r["ended_at"] and parse_iso(r["ended_at"]).date()==today:
@@ -396,6 +396,15 @@ async def setup_save(client_id:str=Form("")):
     CLIENT_ID=cid
     return RedirectResponse("/",303)
 
+@app.post("/api/character/{cid}/main")
+async def api_set_main_character(cid:int):
+    with db() as c:
+        if not c.execute("SELECT 1 FROM characters WHERE character_id=?",(cid,)).fetchone():
+            return JSONResponse({"ok":False,"error":"Character not found."},404)
+        c.execute("UPDATE characters SET character_role='alt'")
+        c.execute("UPDATE characters SET character_role='main' WHERE character_id=?",(cid,))
+    return JSONResponse({"ok":True})
+
 @app.get("/api/dashboard")
 async def api_dashboard(): return JSONResponse(await dashboard_payload())
 
@@ -423,7 +432,10 @@ async def callback(code:str,state:str):
     async with httpx.AsyncClient(timeout=30) as cl:
         r=await cl.post(SSO_TOKEN,auth=auth,data=data);r.raise_for_status();t=r.json()
     cid=charid(t["access_token"]);pub=await esi_get(f"/characters/{cid}/")
-    with db() as c:c.execute("""INSERT INTO characters(character_id,name,access_token,refresh_token,expires_at,connected_at) VALUES(?,?,?,?,?,?) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso()))
+    with db() as c:
+        has_main=c.execute("SELECT 1 FROM characters WHERE character_role='main' LIMIT 1").fetchone()
+        role="alt" if has_main else "main"
+        c.execute("""INSERT INTO characters(character_id,name,access_token,refresh_token,expires_at,connected_at,character_role) VALUES(?,?,?,?,?,?,?) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso(),role))
     await sync_character(cid)
     return RedirectResponse("/",302)
 
@@ -483,7 +495,15 @@ async def api_sync():
 async def api_start_run(request:Request):
     body=await request.json(); anomaly=body.get("anomaly",""); variant=body.get("variant",""); pids=[int(x) for x in body.get("participants",[])]; notes=(body.get("notes") or "").strip()
     if anomaly not in ANOMALIES or not pids:return JSONResponse({"ok":False,"error":"Choose an anomaly and at least one participant."},400)
-    st=iso(); system,ships=cached_run_context(pids)
+    st=iso()
+    client_started=body.get("client_started_at")
+    if client_started:
+        try:
+            candidate=parse_iso(client_started)
+            delta=abs((utcnow()-candidate).total_seconds())
+            if delta<=180: st=iso(candidate)
+        except: pass
+    system,ships=cached_run_context(pids)
     with db() as c:
         if c.execute("SELECT 1 FROM runs WHERE status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
         sid=ensure_session(c,st)
@@ -634,12 +654,12 @@ async def history(request:Request,days:int=7):
         ss=c.execute("SELECT * FROM sessions WHERE status='complete' ORDER BY ended_at DESC").fetchall()
         ess=c.execute("""SELECT e.*,COALESCE(ch.name,CAST(e.character_id AS TEXT)) AS character_name FROM ess_events e LEFT JOIN characters ch ON ch.character_id=e.character_id ORDER BY e.date DESC""").fetchall()
         alls=c.execute("SELECT id FROM sessions WHERE status='complete' ORDER BY id DESC LIMIT 100").fetchall()
-    buckets={(start+timedelta(days=i)).isoformat():{"date":(start+timedelta(days=i)).isoformat(),"bounty":0,"ess":0,"loot":0,"salvage":0,"bonus":0} for i in range(days)}
+    buckets={(start+timedelta(days=i)).isoformat():{"date":(start+timedelta(days=i)).isoformat(),"bounty":0,"ess":0,"loot":0,"salvage":0,"bonus":0,"seconds":0,"sites":0,"isk_hr":0} for i in range(days)}
     for r in rs:
         if not r["ended_at"]:continue
         k=parse_iso(r["ended_at"]).date().isoformat()
         if k in buckets:
-            buckets[k]["bounty"]+=money(r["combined_bounty"]);buckets[k]["bonus"]+=money(r["escalation_sale_value"])+money(r["rare_spawn_value"])
+            buckets[k]["bounty"]+=money(r["combined_bounty"]);buckets[k]["bonus"]+=money(r["escalation_sale_value"])+money(r["rare_spawn_value"]);buckets[k]["seconds"]+=effective_run_seconds(r);buckets[k]["sites"]+=1
     sess=[]
     for s in ss:
         rr=[r for r in rs if r["session_id"]==s["id"]];d=dict(s);d["site_count"]=len(rr);d["bounty"]=sum(money(r["combined_bounty"]) for r in rr);d["bonus"]=sum(money(r["escalation_sale_value"])+money(r["rare_spawn_value"]) for r in rr);d["total"]=d["bounty"]+money(s["loot_value"])+money(s["salvage_value"])+d["bonus"];d["systems"]=", ".join(sorted(set(r["system_name"] or "Unknown" for r in rr))) if rr else "—";span=max(0,int((parse_iso(s["ended_at"])-parse_iso(s["started_at"])).total_seconds()));d["duration_label"]=f"{span//3600}h {(span%3600)//60}m" if span>=3600 else f"{span//60}m";sess.append(d)
@@ -648,6 +668,9 @@ async def history(request:Request,days:int=7):
     for e in ess:
         k=parse_iso(e["date"]).date().isoformat()
         if k in buckets:buckets[k]["ess"]+=money(e["amount"])
+    for b in buckets.values():
+        total_income=sum(money(b[k]) for k in ["bounty","ess","loot","salvage","bonus"])
+        b["isk_hr"]=total_income/b["seconds"]*3600 if b["seconds"] else 0
     return templates.TemplateResponse(request=request,name="history.html",context={"days":days,"runs":[enrich(r) for r in rs[:200]],"sessions":sess[:100],"ess":[dict(e) for e in ess[:100]],"all_sessions":[dict(s) for s in alls],"chart_data":json.dumps(list(buckets.values()))})
 
 @app.post("/ess/{eid}/assign")
