@@ -52,7 +52,7 @@ def test_app(tmp_path_factory):
     env.update({
         "TRACKER_HOST": "127.0.0.1",
         "TRACKER_PORT": str(port),
-        "EVE_CLIENT_ID": "",
+        "EVE_CLIENT_ID": "test-client-id",
         "EVE_CLIENT_SECRET": "",
         "EVE_CALLBACK_URL": f"http://127.0.0.1:{port}/callback",
         "PYTHONUNBUFFERED": "1",
