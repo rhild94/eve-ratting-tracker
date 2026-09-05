@@ -55,6 +55,8 @@ def test_app(tmp_path_factory):
         "EVE_CLIENT_SECRET": "",
         "EVE_CALLBACK_URL": f"http://127.0.0.1:{port}/callback",
         "PYTHONUNBUFFERED": "1",
+        "ESI_AUTO_SYNC_INITIAL_DELAY_SECONDS": "3600",
+        "ESI_AUTO_SYNC_SECONDS": "1800",
     })
 
     proc = subprocess.Popen(
