@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.1.0"
+APP_VERSION="8.2.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -275,13 +275,12 @@ async def dashboard_payload():
         pending_esi=c.execute("SELECT COUNT(*) AS n FROM runs WHERE status='complete' AND esi_synced_at IS NULL").fetchone()["n"]
         last_sync=c.execute("SELECT MAX(last_esi_sync) AS t FROM characters").fetchone()["t"]
         sync_state=c.execute("SELECT * FROM esi_sync_state WHERE id=1").fetchone()
-    esi_state={"pending_runs":pending_esi,"last_sync":last_sync,"interval_minutes":AUTO_SYNC_INTERVAL_SECONDS//60}
+    esi_state={"pending_runs":pending_esi,"last_sync":last_sync,"interval_minutes":AUTO_SYNC_INTERVAL_SECONDS//60,"configured":bool(CLIENT_ID),"connected_characters":len(characters)}
     if sync_state:esi_state.update({k:sync_state[k] for k in ["last_attempt","last_success","last_error","next_check"]})
     return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":esi_state}
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
-    if not CLIENT_ID:return RedirectResponse("/setup",302)
     payload=await dashboard_payload()
     return templates.TemplateResponse(request=request,name="index.html",context={"data":payload,"config_ok":bool(CLIENT_ID),"version":APP_VERSION})
 
@@ -311,7 +310,7 @@ async def api_dashboard(): return JSONResponse(await dashboard_payload())
 
 @app.get("/login")
 async def login():
-    if not CLIENT_ID:return RedirectResponse("/setup",302)
+    if not CLIENT_ID:return HTMLResponse("EVE connection is not configured yet. The local tracker is fully available; add a Client ID in Settings when you want to connect ESI.",503)
     st=secrets.token_urlsafe(32)
     verifier=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
     challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
