@@ -36,6 +36,23 @@ jobs:
       - name: Run regression suite
         run: python -m pytest tests -v --tb=short
 
+      - name: Build downloadable tracker package
+        if: success()
+        run: |
+          mkdir -p release/eve-ratting-tracker
+          cp app.py requirements.txt README.md release/eve-ratting-tracker/
+          cp -r static templates release/eve-ratting-tracker/
+          cd release
+          zip -r eve-ratting-tracker.zip eve-ratting-tracker
+
+      - name: Upload tracker package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eve-ratting-tracker
+          path: release/eve-ratting-tracker.zip
+          retention-days: 30
+
       - name: Upload Playwright artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
