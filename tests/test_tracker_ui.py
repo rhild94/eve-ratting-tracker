@@ -100,3 +100,17 @@ def test_esi_failure_does_not_break_local_tracker(page):
     expect(page.locator("#saveStatus")).to_contain_text("Local data safe")
     expect(page.locator("#startBtn")).to_be_enabled()
     start_site(page)
+
+
+def test_esi_health_warning_is_compact_and_visible(page):
+    page.evaluate("""() => {
+      DATA.esi.last_error = 'simulated ESI outage';
+      DATA.esi.last_success = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      DATA.esi.next_check = new Date(Date.now() + 25 * 60 * 1000).toISOString();
+      DATA.esi.pending_runs = 2;
+      renderEsiStatus();
+    }""")
+    expect(page.locator("#esiAlert")).to_be_visible()
+    expect(page.locator("#esiAlert")).to_contain_text("ESI-based values may be stale")
+    expect(page.locator("#systemStatus")).to_contain_text("Next check")
+    expect(page.locator("#systemStatus")).to_contain_text("2 runs pending bounty data")
