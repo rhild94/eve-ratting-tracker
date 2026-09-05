@@ -107,3 +107,23 @@ def test_dashboard_exposes_esi_sync_health(test_app):
         assert e["last_error"] == "simulated ESI outage"
         assert e["last_success"] == "2026-09-05T11:30:00+00:00"
         assert e["next_check"] == "2026-09-05T12:30:00+00:00"
+
+
+def test_delete_completed_run_returns_promptly(test_app):
+    import time
+    base = test_app["base_url"]
+    with httpx.Client(base_url=base, timeout=5) as c:
+        r = c.post("/api/run/start", json={
+            "anomaly": "Angel Haven",
+            "variant": "Default",
+            "participants": [90000001],
+            "notes": "delete regression",
+        })
+        rid = r.json()["run"]["id"]
+        assert c.post(f"/api/run/{rid}/complete").status_code == 200
+        started = time.monotonic()
+        r = c.delete(f"/api/run/{rid}")
+        elapsed = time.monotonic() - started
+        assert r.status_code == 200, r.text
+        assert elapsed < 2.0
+        assert c.get(f"/api/run/{rid}").status_code == 404
