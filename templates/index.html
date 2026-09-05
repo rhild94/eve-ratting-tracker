@@ -7,7 +7,7 @@
 <div class="actions header-actions"><div class="esi-stack"><button id="syncBtn" class="secondary">↻ Sync ESI</button><span id="systemStatus" class="esi-status muted"></span><div id="esiAlert" class="esi-alert hidden"></div></div><a class="button" href="/login">+ Connect Character</a></div>
 </header>
 
-{% if not config_ok %}<div class="warning"><b>Configuration missing.</b> Check your existing <code>.env</code>.</div>{% endif %}
+{% if not config_ok %}<div class="warning compact-warning"><b>ESI not connected.</b> Local tracking is fully available. Configure EVE connection only when you want ESI data.</div>{% endif %}
 
 <section class="cards">
 <div class="card"><span>Today's Bounty</span><b id="statBounty">0m</b></div>
