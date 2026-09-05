@@ -264,4 +264,6 @@ $("#syncBtn").addEventListener("click",async()=>{
  }finally{b.disabled=false;b.textContent="↻ Sync ESI";}
 });
 render();
-if(DATA.esi?.pending_runs) setStatus(`${DATA.esi.pending_runs} completed run${DATA.esi.pending_runs===1?"":"s"} pending ESI sync`);\nsetInterval(refreshBackgroundStatus,60000);\n
+if(DATA.esi?.pending_runs) setStatus(`${DATA.esi.pending_runs} completed run${DATA.esi.pending_runs===1?"":"s"} pending ESI sync`);
+setInterval(refreshBackgroundStatus,60000);
+
