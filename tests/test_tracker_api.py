@@ -134,3 +134,51 @@ def test_progression_page_loads_without_snapshots(test_app):
         r = c.get("/progression")
         assert r.status_code == 200
         assert "Character Progression" in r.text
+
+
+def test_session_update_api(test_app):
+    base = test_app["base_url"]
+    with httpx.Client(base_url=base, timeout=5) as c:
+        r = c.post("/api/run/start", json={"anomaly":"Angel Haven","variant":"Default","participants":[90000001],"notes":""})
+        rid = r.json()["run"]["id"]
+        c.post(f"/api/run/{rid}/complete")
+        c.post("/api/session/end", json={"loot_value":1000000,"salvage_value":2000000,"notes":"old"})
+        import sqlite3
+        with sqlite3.connect(test_app["work"] / "ratting_tracker.db") as db:
+            sid = db.execute("SELECT id FROM sessions ORDER BY id DESC LIMIT 1").fetchone()[0]
+        r = c.post(f"/api/session/{sid}", json={"loot_value":3000000,"salvage_value":4000000,"notes":"updated"})
+        assert r.status_code == 200
+        j = c.get(f"/api/session/{sid}").json()["session"]
+        assert j["loot_value"] == 3000000
+        assert j["salvage_value"] == 4000000
+        assert j["notes"] == "updated"
+
+
+def test_progression_uses_cached_snapshot_and_names(test_app):
+    import sqlite3, json
+    db = test_app["work"] / "ratting_tracker.db"
+    with sqlite3.connect(db) as c:
+        c.execute("INSERT INTO type_names(type_id,name) VALUES(?,?)", (3300, "Gunnery"))
+        c.execute("INSERT INTO skill_snapshots(character_id,captured_at,total_sp,skills_json,queue_json) VALUES(?,?,?,?,?)",
+                  (90000001, "2026-09-05T12:00:00+00:00", 1234567,
+                   json.dumps([{"skill_id":3300,"trained_skill_level":3}]),
+                   json.dumps([{"skill_id":3300,"finished_level":4,"finish_date":"2026-09-06T12:00:00Z"}])))
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r = c.get("/progression")
+        assert r.status_code == 200
+        assert "1,234,567 SP" in r.text
+        assert "Gunnery" in r.text
+
+
+def test_ess_history_shows_character_name_without_assignment_controls(test_app):
+    import sqlite3
+    db = test_app["work"] / "ratting_tracker.db"
+    with sqlite3.connect(db) as c:
+        c.execute("INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",
+                  (999001,90000001,"2026-09-05T06:25:00+00:00",12230000))
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r = c.get("/history")
+        assert r.status_code == 200
+        assert "Playwright Pilot" in r.text
+        assert "Character ID" not in r.text
+        assert "Unassigned" not in r.text
