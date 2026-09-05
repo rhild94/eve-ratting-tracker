@@ -66,12 +66,28 @@ function renderStats(){
  $("#statIskHr").textContent=fmtM(DATA.stats.avg_isk_hr);
 }
 function participantCard(c){
- return `<label class="participant-card">
+ const main=c.role==="main";
+ return `<div class="participant-wrap ${main?"main-character":"alt-character"}">
+  <label class="participant-card">
    <input type="checkbox" value="${c.id}" checked>
    <img src="${c.portrait}" alt="${escapeHtml(c.name)}">
-   <span>${escapeHtml(c.name)}</span>
+   <span class="character-copy"><span>${escapeHtml(c.name)}</span><small>${main?"Main character":"Alt"}</small></span>
    <b>✓</b>
- </label>`;
+  </label>
+  <button type="button" class="role-action ${main?"is-main":""}" data-character-id="${c.id}" ${main?"disabled":""}>${main?"★ Main":"Set as main"}</button>
+ </div>`;
+}
+function setupCharacterRoles(){
+ document.querySelectorAll(".role-action:not(.is-main)").forEach(btn=>{
+  btn.addEventListener("click",async()=>{
+   btn.disabled=true;btn.textContent="Saving…";
+   try{
+    const r=await fetch(`/api/character/${btn.dataset.characterId}/main`,{method:"POST"});
+    if(!r.ok)throw new Error("Could not update character role.");
+    await refreshDashboard();
+   }catch(err){alert(err.message);btn.disabled=false;btn.textContent="Set as main";}
+  });
+ });
 }
 function startForm(){
  const opts=DATA.anomalies.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
@@ -158,7 +174,7 @@ function renderRecent(){
 function render(){
  renderStats();renderSession();renderRecent();renderEsiStatus();
  if(DATA.active)runningView(DATA.active);
- else{$("#trackerContent").innerHTML=startForm();setupVariants();$("#startBtn").addEventListener("click",startRun);}
+ else{$("#trackerContent").innerHTML=startForm();setupVariants();setupCharacterRoles();$("#startBtn").addEventListener("click",startRun);}
 }
 async function refreshDashboard(){
  const r=await fetch("/api/dashboard"); if(r.ok){DATA=await r.json();render();}
@@ -171,20 +187,43 @@ async function refreshBackgroundStatus(){
   renderStats();renderRecent();renderSession();renderEsiStatus();
  }catch{}
 }
+function startingView(payload,clickedAt){
+ if(timerHandle)clearInterval(timerHandle);
+ $("#trackerContent").innerHTML=`<div class="running-head"><div><div class="eyebrow">Starting site…</div><h2>${escapeHtml(payload.anomaly)} <span>· ${escapeHtml(payload.variant||"Default")}</span></h2></div><div id="timer" class="timer">00:00:00</div></div>
+ <div class="starting-cloud"><span class="pulse-dot"></span><div><b>Timer started locally</b><small>Saving the site start to the cloud…</small></div></div>
+ <div class="run-actions"><button class="secondary" disabled>Saving start…</button></div>`;
+ const started=new Date(clickedAt).getTime();
+ const tick=()=>{
+  const sec=Math.max(0,Math.floor((Date.now()-started)/1000));
+  const timer=$("#timer");if(timer)timer.textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");
+ };
+ tick();timerHandle=setInterval(tick,250);
+}
+
 async function startRun(){
  const btn=$("#startBtn");btn.disabled=true;setStatus("Starting…");
  const participants=[...document.querySelectorAll(".participant-card input:checked")].map(x=>Number(x.value));
- const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,notes:$("#runNotes").value};
- const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
+ const clickedAt=new Date().toISOString();
+ const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,notes:$("#runNotes").value,client_started_at:clickedAt};
+ if(!participants.length){alert("Choose at least one participant.");btn.disabled=false;setStatus("");return;}
+ startingView(payload,clickedAt);
+ const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),60000);
  try{
   const r=await fetch("/api/run/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:controller.signal});
   let j={}; try{j=await r.json()}catch{}
   if(!r.ok)throw new Error(j.error||`Could not start (${r.status})`);
   DATA.active=j.run;DATA.session=DATA.session||{id:j.session_id,sites:0,bounty:0};setStatus("Local data saved ✓ · ESI pending");renderSession();runningView(j.run);
  }catch(err){
-  alert(err.name==="AbortError"?"Start request timed out. Please try again.":"Could not start site: "+err.message);
-  btn.disabled=false;setStatus("");
- }finally{clearTimeout(timer);}
+  try{
+   const check=await fetch("/api/dashboard");if(check.ok){
+    DATA=await check.json();
+    if(DATA.active){setStatus("Site start confirmed ✓");render();return;}
+   }
+  }catch{}
+  if(timerHandle)clearInterval(timerHandle);
+  alert(err.name==="AbortError"?"The cloud took too long to confirm the site start. No active site was found.":"Could not start site: "+err.message);
+  render();setStatus("");
+ }finally{clearTimeout(timeout);}
 }
 async function completeRun(id){
  $("#completeBtn").disabled=true;setStatus("Completing…");
@@ -197,30 +236,41 @@ function showQuickResult(run,escalations,bountyPending){
  const m=$("#modalContent"), esc=escalations.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
  m.innerHTML=`<div class="modal-head"><div><span class="eyebrow">Site complete</span><h2>${escapeHtml(run.anomaly)}</h2></div><button id="closeResult" class="icon-btn">×</button></div>
  <div class="result-summary"><div><span>Time</span><b>${run.duration_label}</b></div><div><span>Bounty</span><b>${bountyPending?"Pending ESI sync":fmtM(run.combined_bounty)}</b></div><div><span>Bounty ISK/hr</span><b>${bountyPending?"—":fmtM(run.isk_hr)}</b></div></div>
- <p class="hint">Only mark bonuses now. Sale/value details can be added later in History.</p>
+ <p class="hint">Only the details relevant to this result will appear.</p>
  <div class="quick-options">
   <label class="toggle-row"><input id="gotEsc" type="checkbox"><span>Escalation received</span></label>
   <div id="escFields" class="conditional hidden"><select id="escName"><option value="">Select escalation</option>${esc}</select><select id="escStatus"><option>Pending</option><option>Sold</option><option>Ran Myself</option><option>Expired</option></select></div>
+  <label id="escValueRow" class="conditional-value hidden">Escalation sale value<input id="escValue" class="isk-input" inputmode="numeric" value=""></label>
   <label class="toggle-row"><input id="gotRare" type="checkbox"><span>Rare spawn</span></label>
-  <div id="rareFields" class="conditional hidden"><select id="rareType"><option>Commander</option><option>Dreadnought</option><option>Titan</option><option>Other</option></select></div>
+  <div id="rareFields" class="conditional hidden"><select id="rareType"><option>Commander</option><option>Dreadnought</option><option>Titan</option><option>Other</option></select>
+    <label class="mini-toggle"><input id="gotRareLoot" type="checkbox"><span>Loot / value dropped</span></label></div>
+  <label id="rareValueRow" class="conditional-value hidden">Rare loot / value<input id="rareValue" class="isk-input" inputmode="numeric" value=""></label>
  </div>
- <details><summary>Optional details now</summary><div class="details-grid"><label>Escalation sale value<input id="escValue" class="isk-input" inputmode="numeric" value=""></label><label>Rare loot/value<input id="rareValue" class="isk-input" inputmode="numeric" value=""></label><label class="full">Note<input id="bonusNote"></label></div></details>
+ <label class="result-note">Note <span class="muted">(optional)</span><input id="bonusNote"></label>
  <div class="modal-actions"><button id="saveNext" class="good big">Save & Next Site</button></div>`;
  bindIskMask($("#escValue")); bindIskMask($("#rareValue"));
- $("#gotEsc").onchange=e=>$("#escFields").classList.toggle("hidden",!e.target.checked);
- $("#gotRare").onchange=e=>$("#rareFields").classList.toggle("hidden",!e.target.checked);
+ const updateFields=()=>{
+  const gotEsc=$("#gotEsc").checked, sold=gotEsc && $("#escStatus").value==="Sold";
+  const gotRare=$("#gotRare").checked, gotLoot=gotRare && $("#gotRareLoot").checked;
+  $("#escFields").classList.toggle("hidden",!gotEsc);
+  $("#escValueRow").classList.toggle("hidden",!sold);
+  $("#rareFields").classList.toggle("hidden",!gotRare);
+  $("#rareValueRow").classList.toggle("hidden",!gotLoot);
+ };
+ $("#gotEsc").onchange=updateFields;$("#escStatus").onchange=updateFields;
+ $("#gotRare").onchange=updateFields;$("#gotRareLoot").onchange=updateFields;
  $("#closeResult").onclick=()=>finishResult(false,run.id);
  $("#saveNext").onclick=()=>finishResult(true,run.id);
- showModal();
+ updateFields();showModal();
 }
 async function finishResult(save,id){
  const btn=$("#saveNext"); if(btn){btn.disabled=true;btn.textContent="Saving…";}
  const payload={
   escalation_name:$("#gotEsc").checked?$("#escName").value:"",
   escalation_status:$("#gotEsc").checked?$("#escStatus").value:"",
-  escalation_sale_value:rawIsk($("#escValue").value),
+  escalation_sale_value:$("#gotEsc").checked && $("#escStatus").value==="Sold"?rawIsk($("#escValue").value):0,
   rare_spawn_type:$("#gotRare").checked?$("#rareType").value:"",
-  rare_spawn_value:rawIsk($("#rareValue").value),
+  rare_spawn_value:$("#gotRare").checked && $("#gotRareLoot").checked?rawIsk($("#rareValue").value):0,
   notes:$("#bonusNote").value||""
  };
  try{
