@@ -21,17 +21,18 @@ def free_port():
 
 
 def wait_for_server(url, timeout=12):
-    import urllib.request
+    import httpx
     deadline = time.time() + timeout
     last = None
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=1) as r:
-                if r.status == 200:
+    with httpx.Client(timeout=1, trust_env=False) as client:
+        while time.time() < deadline:
+            try:
+                r = client.get(url)
+                if r.status_code == 200:
                     return
-        except Exception as e:
-            last = e
-        time.sleep(0.15)
+            except Exception as e:
+                last = e
+            time.sleep(0.15)
     raise RuntimeError(f"Test server did not start: {last}")
 
 
