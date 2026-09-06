@@ -48,8 +48,8 @@ def load_hd_background():
     global _HD_BACKGROUND_BYTES
     if _HD_BACKGROUND_BYTES is None:
         encoded="".join(
-            (BASE_DIR/"static"/f"hd_bg_compact_{i:02d}.txt").read_text(encoding="utf-8").strip()
-            for i in range(1,7)
+            (BASE_DIR/"static"/f"hd_bg_{i:02d}.txt").read_text(encoding="utf-8").strip()
+            for i in range(1,9)
         )
         encoded="".join(encoded.split())
         encoded += "=" * (-len(encoded) % 4)
