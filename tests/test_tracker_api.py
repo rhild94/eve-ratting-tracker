@@ -375,3 +375,14 @@ def test_wallet_entry_ids_are_scoped_per_character(test_app):
         assert rows == [(90000001,3920000.0),(90000002,4080000.0)]
         c.execute("DELETE FROM wallet_entries WHERE entry_id=?",(same_entry_id,))
         c.execute("DELETE FROM characters WHERE character_id=90000002")
+
+
+def test_hd_background_payload_is_complete_webp(test_app):
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r=c.get("/art/eve-bg.webp")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("image/webp")
+        assert r.content[:4] == b"RIFF"
+        assert r.content[8:12] == b"WEBP"
+        assert int.from_bytes(r.content[4:8],"little")+8 == len(r.content)
+        assert len(r.content) > 30000
