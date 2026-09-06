@@ -96,7 +96,7 @@ function startForm(){
  <div class="field"><label>Variant</label><select id="variant"></select><div id="variantHint" class="hint"></div></div>
  <div class="field full"><label>Participants</label><div class="participants">${DATA.characters.map(participantCard).join("")}</div></div>
  <div class="field full"><label>Quick note <span class="muted">(optional)</span></label><input id="runNotes" placeholder="Only if something unusual happened"></div>
- <div class="start-row"><button id="startBtn" class="start big">▶ Start Site</button><span class="muted">Timer starts immediately after the request succeeds.</span></div>
+ <div class="start-row"><button id="startBtn" class="start big">▶ Start Site</button></div>
  </div>`;
 }
 function setupVariants(){
@@ -121,39 +121,54 @@ function waveRows(w){
 }
 function runningView(run){
  const waves=(window.SITE_DATA[run.anomaly]?.variants||{})[run.variant||"Default"]||[];
- let wave=Number(localStorage.getItem("wave_"+run.id)||0); wave=Math.max(0,Math.min(wave,Math.max(0,waves.length-1)));
+ let wave=Number(localStorage.getItem("wave_"+run.id)||0);wave=Math.max(0,Math.min(wave,Math.max(0,waves.length-1)));
+
  const renderWave=()=>{
-   const box=$("#waveBox"); if(!box)return;
-   if(!waves.length){box.innerHTML=`<div class="helper-card"><b>Site Helper</b><p class="hint">Detailed waves are intentionally omitted for this unverified variant.</p></div>`;return;}
-   const w=waves[wave], note=w[2]||"";
-   box.innerHTML=`<div class="helper-card">
-    <div class="helper-head"><div><span class="small-title">Current wave</span><h3>${escapeHtml(w[0])}</h3></div><b>${wave+1}/${waves.length}</b></div>
-    ${waveRows(w)}
-    ${note?`<div class="${note.startsWith("TRIGGER")?"trigger":"wave-note"}">${note.startsWith("TRIGGER")?"⚠ ":""}${escapeHtml(note)}</div>`:""}
-    <div class="helper-nav"><button id="prevWave" ${wave===0?"disabled":""}>← Previous</button><button id="nextWave" class="good" ${wave===waves.length-1?"disabled":""}>${wave===waves.length-1?"Final Wave":"✓ Next Wave →"}</button></div>
-   </div>`;
-   $("#prevWave")?.addEventListener("click",()=>{if(wave>0){wave--;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
-   $("#nextWave")?.addEventListener("click",()=>{if(wave<waves.length-1){wave++;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
+  const box=$("#waveBox");if(!box)return;
+  if(!waves.length){box.innerHTML=`<div class="helper-card"><div class="helper-head"><div><span class="small-title">Site helper</span><h3>Wave data unavailable</h3></div></div><p class="hint">Detailed waves are intentionally omitted for this unverified variant.</p></div>`;return;}
+  const w=waves[wave],note=w[2]||"",isTrigger=note.startsWith("TRIGGER");
+  const steps=waves.map((x,i)=>`<button class="wave-step ${i===wave?"current":i<wave?"past":""}" data-wave="${i}" title="${escapeHtml(x[0])}">${i+1}</button>`).join("");
+  box.innerHTML=`<div class="wave-progress-card">
+    <div class="wave-progress-head"><span>Wave Progress</span><b>Wave ${wave+1} of ${waves.length}</b></div>
+    <div class="wave-stepper">${steps}</div>
+   </div>
+   <div class="wave-detail-grid">
+    <div class="helper-card wave-composition">
+      <div class="helper-head"><div><span class="small-title">Current wave</span><h3>${escapeHtml(w[0])}</h3></div><b>${wave+1}/${waves.length}</b></div>
+      ${waveRows(w)}
+      ${!isTrigger && note?`<div class="wave-note">${escapeHtml(note)}</div>`:""}
+    </div>
+    <aside class="trigger-card ${isTrigger?"has-trigger":"no-trigger"}">
+      <span class="small-title">Trigger</span>
+      ${isTrigger?`<b>⚠ ${escapeHtml(note.replace(/^TRIGGER:\s*/,""))}</b><small>Use this trigger instruction for the current wave.</small>`:`<b>No specific trigger</b><small>${note?escapeHtml(note):"Follow the listed wave composition."}</small>`}
+    </aside>
+   </div>
+   <div class="helper-nav wave-nav"><button id="prevWave" ${wave===0?"disabled":""}>← Previous Wave</button><button id="nextWave" class="good" ${wave===waves.length-1?"disabled":""}>${wave===waves.length-1?"Final Wave":"Next Wave →"}</button></div>`;
+  box.querySelectorAll(".wave-step").forEach(btn=>btn.addEventListener("click",()=>{wave=Number(btn.dataset.wave);localStorage.setItem("wave_"+run.id,wave);renderWave()}));
+  $("#prevWave")?.addEventListener("click",()=>{if(wave>0){wave--;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
+  $("#nextWave")?.addEventListener("click",()=>{if(wave<waves.length-1){wave++;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
  };
- $("#trackerContent").innerHTML=`<div class="running-head"><div><div class="eyebrow">${escapeHtml(run.system_name||"Unknown system")}</div><h2>${escapeHtml(run.anomaly)} <span>· ${escapeHtml(run.variant||"Default")}</span></h2></div><div id="timer" class="timer">00:00:00</div></div>
- <div id="waveBox"></div>
- <div class="run-actions"><button id="pauseBtn" class="secondary">${run.is_paused?"▶ Resume Timer":"⏸ Pause Timer"}</button><button id="completeBtn" class="complete big">✓ Complete Site</button><button id="cancelBtn" class="danger">Delete Test / Cancel</button></div>`;
+
+ $("#trackerContent").innerHTML=`<div class="running-site-card">
+  <div class="running-head">
+   <div><div class="eyebrow">${escapeHtml(run.system_name||"Unknown system")}</div><h2>${escapeHtml(run.anomaly)} <span>· ${escapeHtml(run.variant||"Default")}</span></h2><span class="status-chip">Running</span></div>
+   <div class="timer-block"><span>Current Site Time</span><div id="timer" class="timer">00:00:00</div></div>
+  </div>
+  <div class="run-actions top-run-actions"><button id="pauseBtn" class="secondary">${run.is_paused?"▶ Resume Timer":"⏸ Pause Timer"}</button><button id="completeBtn" class="complete big">✓ Complete Site</button><button id="cancelBtn" class="danger">Delete Test / Cancel</button></div>
+ </div>
+ <div id="waveBox"></div>`;
  renderWave();
+
  if(timerHandle)clearInterval(timerHandle);
  const start=new Date(run.started_at);
  const displaySeconds=()=>{
-   let end=Date.now(), paused=Number(run.paused_seconds||0);
-   if(run.paused_at) paused += Math.max(0,(end-new Date(run.paused_at).getTime())/1000);
-   return Math.max(0,Math.floor((end-start.getTime())/1000-paused));
+  let end=Date.now(),paused=Number(run.paused_seconds||0);
+  if(run.paused_at)paused+=Math.max(0,(end-new Date(run.paused_at).getTime())/1000);
+  return Math.max(0,Math.floor((end-start.getTime())/1000-paused));
  };
- const tick=()=>{let s=displaySeconds();$("#timer").textContent=[Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(x=>String(x).padStart(2,"0")).join(":");$("#timer").classList.toggle("paused",!!run.is_paused)};tick();timerHandle=setInterval(tick,1000);
- $("#pauseBtn").addEventListener("click",async()=>{
-   const b=$("#pauseBtn");b.disabled=true;
-   const r=await fetch(`/api/run/${run.id}/pause`,{method:"POST"}),j=await r.json();
-   if(r.ok){run=j.run;DATA.active=j.run;b.textContent=run.is_paused?"▶ Resume Timer":"⏸ Pause Timer";tick();}
-   else alert(j.error||"Could not pause timer.");
-   b.disabled=false;
- });
+ const tick=()=>{let sec=displaySeconds();$("#timer").textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");$("#timer").classList.toggle("paused",!!run.is_paused)};
+ tick();timerHandle=setInterval(tick,1000);
+ $("#pauseBtn").addEventListener("click",async()=>{const b=$("#pauseBtn");b.disabled=true;const r=await fetch(`/api/run/${run.id}/pause`,{method:"POST"}),j=await r.json();if(r.ok){run=j.run;DATA.active=j.run;b.textContent=run.is_paused?"▶ Resume Timer":"⏸ Pause Timer";tick()}else alert(j.error||"Could not pause timer.");b.disabled=false});
  $("#completeBtn").addEventListener("click",()=>completeRun(run.id));
  $("#cancelBtn").addEventListener("click",()=>deleteRunFromTracker(run.id));
 }
