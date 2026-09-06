@@ -48,16 +48,18 @@ def load_hd_background():
     global _HD_BACKGROUND_BYTES
     if _HD_BACKGROUND_BYTES is None:
         encoded="".join(
-            (BASE_DIR/"static"/f"hd_bg_{i:02d}.txt").read_text(encoding="utf-8").strip()
-            for i in range(1,9)
+            (BASE_DIR/"static"/f"hd_bg_compact_{i:02d}.txt").read_text(encoding="utf-8").strip()
+            for i in range(1,7)
         )
-        # GitHub's file API can wrap long text payloads. Strip all whitespace
-        # before decoding and restore any missing terminal Base64 padding.
         encoded="".join(encoded.split())
         encoded += "=" * (-len(encoded) % 4)
-        _HD_BACKGROUND_BYTES=base64.b64decode(encoded,validate=True)
-        if not (_HD_BACKGROUND_BYTES.startswith(b"RIFF") and b"WEBP" in _HD_BACKGROUND_BYTES[:16]):
-            raise ValueError("Invalid HD background image payload.")
+        raw=base64.b64decode(encoded,validate=True)
+        if not (raw.startswith(b"RIFF") and raw[8:12]==b"WEBP"):
+            raise ValueError("Invalid HD background image header.")
+        declared=int.from_bytes(raw[4:8],"little")+8
+        if declared!=len(raw):
+            raise ValueError(f"Incomplete HD background image: expected {declared} bytes, got {len(raw)}.")
+        _HD_BACKGROUND_BYTES=raw
     return _HD_BACKGROUND_BYTES
 
 @app.get("/art/eve-bg.webp")
@@ -191,7 +193,7 @@ init_db()
 
 @app.middleware("http")
 async def access_gate(request:Request,call_next):
-    if not APP_ACCESS_KEY or request.url.path in {"/access","/health"} or request.url.path.startswith("/static/"):
+    if not APP_ACCESS_KEY or request.url.path in {"/access","/health"} or request.url.path.startswith("/static/") or request.url.path.startswith("/art/"):
         return await call_next(request)
     if secrets.compare_digest(request.cookies.get("tracker_access",""),ACCESS_COOKIE_VALUE):
         return await call_next(request)
