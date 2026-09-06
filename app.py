@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.4.0"
+APP_VERSION="8.5.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -315,17 +315,71 @@ def cached_run_context(pids):
     ships=[{"character":r["name"],"ship":r["cache_ship_name"]} for r in rows if r["cache_ship_name"]]
     return system,ships
 
-def reconcile_bounty(rid):
-    with db() as c:r=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
-    if not r or not r["ended_at"]:return
-    pids=json.loads(r["participants_json"]); total=0
-    rows=c.execute(f"SELECT * FROM wallet_entries WHERE character_id IN ({','.join('?'*len(pids))})",pids).fetchall()
-    for j in rows:
-        try:d=parse_iso(j["date"])
-        except:continue
-        if parse_iso(r["started_at"])<=d<=parse_iso(r["ended_at"]) and (j["ref_type"] or "").lower()=="bounty_prizes" and money(j["amount"])>0:
-            total+=money(j["amount"])
-    c.execute("UPDATE runs SET combined_bounty=? WHERE id=?",(total,rid))
+def _overlap_seconds(a1,a2,b1,b2):
+    return max(0.0,(min(a2,b2)-max(a1,b1)).total_seconds())
+
+def reconcile_bounties():
+    """Allocate real ESI bounty ticks across completed sites by time overlap.
+
+    EVE wallet bounty_prizes entries are periodic aggregate payouts, not
+    per-site records. A payout can arrive after a site ends and can span
+    multiple sites. We therefore preserve the exact ESI payout total while
+    distributing it proportionally across the completed runs that overlap
+    the payout interval for each participating character.
+    """
+    with db() as c:
+        runs=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY started_at").fetchall()
+        chars=[x["character_id"] for x in c.execute("SELECT character_id FROM characters")]
+        c.execute("UPDATE runs SET combined_bounty=0")
+        latest_tick={}
+        allocations={int(r["id"]):0.0 for r in runs}
+        parsed_runs=[]
+        for r in runs:
+            try:
+                parsed_runs.append((r,parse_iso(r["started_at"]),parse_iso(r["ended_at"]),set(json.loads(r["participants_json"]))))
+            except Exception:
+                continue
+
+        for cid in chars:
+            ticks=c.execute("""SELECT date,amount FROM wallet_entries
+                               WHERE character_id=? AND LOWER(COALESCE(ref_type,''))='bounty_prizes' AND amount>0
+                               ORDER BY date""",(cid,)).fetchall()
+            prev_dt=None
+            for tick in ticks:
+                try: tick_dt=parse_iso(tick["date"])
+                except Exception: continue
+                latest_tick[cid]=tick_dt
+                # Normally bounty payouts are periodic. If the prior tick is
+                # missing/stale, use a conservative 20-minute earning window.
+                if prev_dt and 0 < (tick_dt-prev_dt).total_seconds() <= 1800:
+                    window_start=prev_dt
+                else:
+                    window_start=tick_dt-timedelta(minutes=20)
+                prev_dt=tick_dt
+
+                overlaps=[]
+                for r,rs,re,pids in parsed_runs:
+                    if cid not in pids: continue
+                    sec=_overlap_seconds(window_start,tick_dt,rs,re)
+                    if sec>0: overlaps.append((int(r["id"]),sec))
+                total_sec=sum(x[1] for x in overlaps)
+                if total_sec<=0: continue
+                amount=money(tick["amount"])
+                for rid,sec in overlaps:
+                    allocations[rid]+=amount*(sec/total_sec)
+
+        now=utcnow()
+        for r,rs,re,pids in parsed_runs:
+            rid=int(r["id"])
+            c.execute("UPDATE runs SET combined_bounty=? WHERE id=?",(allocations.get(rid,0.0),rid))
+            # A site remains visibly pending until every participant has a
+            # bounty tick at/after site completion, or enough time has passed
+            # that no additional tick should normally be expected.
+            complete_ticks=bool(pids) and all(latest_tick.get(cid) and latest_tick[cid]>=re for cid in pids)
+            aged=(now-re).total_seconds()>=1800
+            c.execute("UPDATE runs SET esi_synced_at=? WHERE id=?",
+                      (iso(now) if (complete_ticks or aged) else None,rid))
+
 
 def effective_run_seconds(r, now=None):
     start=parse_iso(r["started_at"])
@@ -451,12 +505,8 @@ async def run_esi_sync(source="manual"):
         except Exception as e:errors.append(f"{cid}: {type(e).__name__}: {e}")
     synced=iso()
     if not errors:
-        with db() as c:rids=[r["id"] for r in c.execute("SELECT id FROM runs WHERE status='complete'")]
-        for rid in rids:
-            try:
-                reconcile_bounty(rid)
-                with db() as c:c.execute("UPDATE runs SET esi_synced_at=? WHERE id=?",(synced,rid))
-            except Exception as e:errors.append(f"run {rid}: {type(e).__name__}: {e}")
+        try:reconcile_bounties()
+        except Exception as e:errors.append(f"bounty reconciliation: {type(e).__name__}: {e}")
     with db() as c:
         if errors:
             c.execute("UPDATE esi_sync_state SET last_error=? WHERE id=1",("; ".join(errors)[:1000],))
