@@ -34,7 +34,7 @@ canvas{width:100%;display:block;background:#08111d;border-radius:7px}
 .esi-stack .esi-alert{margin:0;padding:6px 8px;font-size:11px;max-width:360px}
 
 .chart-shell{position:relative}
-.chart-tooltip{position:absolute;z-index:5;pointer-events:none;min-width:180px;padding:10px 12px;border:1px solid #28506f;border-radius:8px;background:#08111df2;box-shadow:0 8px 28px #0008;font-size:11px}
+.chart-tooltip{position:absolute;z-index:5;pointer-events:none;min-width:190px;padding:11px 13px;border:1px solid #3ba7c7;border-radius:8px;background:linear-gradient(180deg,rgba(12,38,55,.98),rgba(7,24,37,.98));box-shadow:0 10px 30px #000b,0 0 18px rgba(53,217,231,.14);font-size:11px}
 .chart-tooltip b,.chart-tooltip strong,.chart-tooltip span{display:block}
 .chart-tooltip strong{font-size:15px;margin:4px 0 7px;color:#e7edf7}
 .chart-tooltip span{color:#a8b8ca;line-height:1.45}
