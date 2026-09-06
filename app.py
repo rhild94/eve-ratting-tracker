@@ -397,6 +397,44 @@ def enrich(r):
     d["is_paused"]=bool(d.get("paused_at"))
     return d
 
+def session_performance(days=30):
+    days=30 if days==30 else 7 if days==7 else 30
+    cutoff=utcnow()-timedelta(days=days)
+    with db() as c:
+        sessions=c.execute("SELECT * FROM sessions WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
+        runs=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
+        ess=c.execute("SELECT * FROM ess_events WHERE session_id IS NOT NULL").fetchall()
+    rows=[]
+    total_income=total_ratting=total_seconds=0.0
+    best=None
+    total_sites=0
+    for ses in sessions:
+        try:end=parse_iso(ses["ended_at"])
+        except:continue
+        if end<cutoff:continue
+        rr=[r for r in runs if r["session_id"]==ses["id"]]
+        if not rr:continue
+        bounty=sum(money(r["combined_bounty"]) for r in rr)
+        bonus=sum(money(r["escalation_sale_value"])+money(r["rare_spawn_value"]) for r in rr)
+        ess_total=sum(money(e["amount"]) for e in ess if e["session_id"]==ses["id"])
+        loot=money(ses["loot_value"]);salvage=money(ses["salvage_value"])
+        ratting=bounty+ess_total
+        total=ratting+loot+salvage+bonus
+        seconds=max(1,(parse_iso(ses["ended_at"])-parse_iso(ses["started_at"])).total_seconds())
+        ratting_hr=ratting/seconds*3600
+        total_hr=total/seconds*3600
+        row={"id":ses["id"],"date":end.strftime("%b %d"),"ended_at":ses["ended_at"],"duration_seconds":seconds,
+             "sites":len(rr),"bounty":bounty,"ess":ess_total,"loot":loot,"salvage":salvage,"bonus":bonus,
+             "ratting_isk":ratting,"total_isk":total,"ratting_isk_hr":ratting_hr,"total_isk_hr":total_hr}
+        rows.append(row)
+        total_income+=total;total_ratting+=ratting;total_seconds+=seconds;total_sites+=len(rr)
+        if best is None or ratting_hr>best["ratting_isk_hr"]:best=row
+    avg_ratting_hr=total_ratting/total_seconds*3600 if total_seconds else 0
+    avg_total_hr=total_income/total_seconds*3600 if total_seconds else 0
+    return {"days":days,"rows":rows,"total_isk":total_income,"ratting_isk":total_ratting,
+            "avg_ratting_isk_hr":avg_ratting_hr,"avg_total_isk_hr":avg_total_hr,
+            "sessions":len(rows),"sites":total_sites,"total_seconds":total_seconds,"best":best}
+
 async def dashboard_payload():
     with db() as c:
         chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
@@ -428,6 +466,14 @@ async def dashboard_payload():
 async def home(request:Request):
     payload=await dashboard_payload()
     return templates.TemplateResponse(request=request,name="index.html",context={"data":payload,"config_ok":bool(CLIENT_ID),"version":APP_VERSION})
+
+@app.get("/dashboard",response_class=HTMLResponse)
+async def dashboard_page(request:Request,days:int=30):
+    perf=session_performance(days)
+    payload=await dashboard_payload()
+    return templates.TemplateResponse(request=request,name="dashboard.html",context={
+        "perf":perf,"chart_data":json.dumps(perf["rows"]),"data":payload,"version":APP_VERSION
+    })
 
 @app.get("/setup",response_class=HTMLResponse)
 async def setup_page(request:Request):
