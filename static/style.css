@@ -61,3 +61,70 @@ canvas{width:100%;display:block;background:#08111d;border-radius:7px}
 .result-note{display:grid;gap:6px;margin-top:12px}
 .income-legend{display:flex;align-items:center;gap:8px;font-size:11px;color:#8295ad;white-space:nowrap}
 .income-legend i{display:block;width:150px;height:8px;border-radius:99px;background:linear-gradient(90deg,#7f554f,#d4873d,#d4cf49,#54d977,#31d8e5);box-shadow:0 0 10px rgba(49,216,229,.12)}
+
+/* v8.5 EVE-inspired shell */
+body.eve-ui{margin:0;background:#030b13;color:#dfeaf3;min-height:100vh}
+body.eve-ui:before{content:"";position:fixed;inset:0;pointer-events:none;background:
+ radial-gradient(circle at 72% 8%,rgba(43,119,157,.14),transparent 32%),
+ radial-gradient(circle at 12% 88%,rgba(15,92,125,.12),transparent 28%),
+ linear-gradient(rgba(6,16,26,.94),rgba(3,9,15,.97));z-index:-2}
+body.eve-ui:after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.22;background-image:
+ linear-gradient(rgba(70,138,176,.035) 1px,transparent 1px),
+ linear-gradient(90deg,rgba(70,138,176,.035) 1px,transparent 1px);background-size:44px 44px;z-index:-1}
+.app-shell{display:grid;grid-template-columns:205px minmax(0,1fr);min-height:100vh}
+.sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;border-right:1px solid #18374d;background:linear-gradient(180deg,#07131e 0%,#06101a 48%,#040c14 100%);padding:22px 12px;display:flex;flex-direction:column}
+.brand{padding:8px 10px 22px;border-bottom:1px solid #173044;display:grid;gap:3px}
+.brand-mark{font-size:30px;font-weight:800;letter-spacing:4px;color:#f2f6f8}
+.brand>span{font-size:10px;letter-spacing:2.4px;color:#71cbe8}
+.brand small{font-size:10px;color:#61788b;margin-top:5px}
+.side-nav{display:grid;gap:5px;margin-top:18px}
+.side-nav a{display:flex;gap:11px;align-items:center;padding:12px 13px;border-radius:5px;color:#b8c9d7;text-decoration:none;border-left:2px solid transparent}
+.side-nav a:hover{background:#0b2030;color:#f2f7fa}
+.side-nav a.active{background:linear-gradient(90deg,#0b2c42,#0a1d2c);border-left-color:#35d9e7;color:#eefaff;box-shadow:inset 0 0 22px rgba(53,217,231,.05)}
+.side-nav a span{width:18px;text-align:center;color:#7fc7e0}
+.sidebar-space{margin-top:auto;border-top:1px solid #173044;padding:18px 10px 8px;text-align:center;display:grid;gap:5px;color:#6d8496;font-size:9px;letter-spacing:1.8px}
+.sidebar-space b{font-size:9px;color:#8aa3b6;letter-spacing:1.6px}
+.main-stage{padding:0 22px 28px;min-width:0}
+.eve-topbar{min-height:92px;border-bottom:1px solid #18374d;display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:18px;background:linear-gradient(90deg,rgba(7,18,29,.2),rgba(16,49,69,.08))}
+.eve-topbar h1{margin:3px 0 0;font-size:25px;letter-spacing:.2px}
+.system-kicker,.eyebrow,.small-title{font-size:10px;text-transform:uppercase;letter-spacing:1.45px;color:#6f91a9}
+.topbar-right{display:flex;align-items:center;gap:12px}
+.eve-time{min-width:150px;border:1px solid #21445f;border-radius:7px;background:#07141f;padding:9px 13px;text-align:center;display:grid;gap:2px;box-shadow:inset 0 0 22px rgba(44,148,188,.04)}
+.eve-time span,.eve-time small{font-size:9px;letter-spacing:1.25px;color:#73a5be}
+.eve-time b{font-size:20px;letter-spacing:1.3px;font-variant-numeric:tabular-nums}
+.sci-panel{border-color:#1b405a;background:linear-gradient(180deg,rgba(8,22,34,.97),rgba(6,17,27,.98));box-shadow:inset 0 0 30px rgba(32,119,156,.025)}
+.metric-grid{display:grid;grid-template-columns:repeat(5,minmax(135px,1fr));gap:11px;margin-bottom:14px}
+.metric-card{border:1px solid #1b405a;border-radius:7px;background:linear-gradient(180deg,#091927,#07131e);padding:14px 16px;display:grid;gap:5px;min-height:88px}
+.metric-card span,.compact-stat span{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#7f9aad}
+.metric-card b{font-size:27px;font-variant-numeric:tabular-nums}
+.metric-card small{font-size:10px;color:#70899b}
+.metric-card.best b{color:#f0bd4b}
+.dashboard-chart{min-height:330px}
+.dashboard-foot-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.compact-stat{margin:0;display:grid;gap:4px;min-height:56px}
+.compact-stat b{font-size:20px}
+.button.selected{border-color:#32b6d6;background:#0b2939;color:#e9fbff}
+.tracker-stats{margin-bottom:14px}
+.running-site-card{border:1px solid #1b405a;border-radius:8px;background:#07131f;padding:14px}
+.timer-block{text-align:right;display:grid;gap:2px}
+.timer-block>span{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#718b9e}
+.status-chip{display:inline-block;margin-top:5px;padding:3px 8px;border-radius:99px;background:#0d3d2b;border:1px solid #1e8a5e;color:#72e6aa;font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+.top-run-actions{margin-top:10px;border-top:1px solid #153047;padding-top:11px}
+.wave-progress-card{border:1px solid #1b405a;border-radius:8px;background:#07131f;padding:12px 14px;margin-top:12px}
+.wave-progress-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#8ca3b4;margin-bottom:10px}
+.wave-stepper{display:flex;align-items:center;gap:8px}
+.wave-step{width:30px;height:30px;padding:0;border-radius:50%;border:1px solid #365267;background:#091522;color:#94a8b8;font-weight:700}
+.wave-step.past{background:#0a4b38;border-color:#24c784;color:#dffff3}
+.wave-step.current{background:#0b2e43;border-color:#35d9e7;color:#eaffff;box-shadow:0 0 14px rgba(53,217,231,.22)}
+.wave-detail-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(210px,.8fr);gap:12px;align-items:stretch}
+.wave-composition{margin:12px 0 0}
+.trigger-card{margin-top:12px;border:1px solid #26445a;border-radius:8px;background:#07131f;padding:14px;display:grid;align-content:start;gap:8px}
+.trigger-card b{font-size:15px;line-height:1.35}
+.trigger-card small{color:#8097a8;line-height:1.45}
+.trigger-card.has-trigger{border-color:#6e4d20;background:linear-gradient(180deg,#1b160c,#0b1218)}
+.trigger-card.has-trigger b{color:#ffc96c}
+.wave-nav{margin-top:10px}
+.session-strip{border:1px solid #19394f;border-radius:7px;background:#07131f}
+.income-legend{border:1px solid #19394f;border-radius:6px;padding:7px 9px}
+@media(max-width:1100px){.metric-grid{grid-template-columns:repeat(3,1fr)}.app-shell{grid-template-columns:170px minmax(0,1fr)}.wave-detail-grid{grid-template-columns:1fr}.topbar-right{flex-wrap:wrap;justify-content:flex-end}}
+@media(max-width:780px){.app-shell{display:block}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid #18374d}.side-nav{display:flex;overflow:auto}.sidebar-space{display:none}.main-stage{padding:0 12px 20px}.eve-topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.topbar-right{width:100%;justify-content:flex-start}.metric-grid{grid-template-columns:repeat(2,1fr)}.dashboard-foot-grid{grid-template-columns:repeat(2,1fr)}}
