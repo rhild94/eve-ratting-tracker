@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ title }} · EVE Ratting Tracker</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v={{ boot.version }}">
 </head>
 <body class="eve-ui">
 <div id="root"><div class="react-boot">Loading EVE Ratting Tracker…</div></div>
 <script>window.__BOOTSTRAP__={{ boot|tojson|safe }};</script>
-<script src="/static/site_data.js"></script>
-<script src="/static/react/app.js"></script>
+<script src="/static/site_data.js?v={{ boot.version }}"></script>
+<script src="/static/react/app.js?v={{ boot.version }}"></script>
 </body>
 </html>
