@@ -1,0 +1,17 @@
+/* HD background override for the approved v10 UI.
+   The image is served by FastAPI from the validated split WebP payload. */
+.page-dashboard:before,
+.page-tracker:before,
+.page-history:before,
+.page-progression:before,
+.page-characters:before,
+.page-settings:before{
+  background-image:url('/art/eve-bg.webp')!important;
+  background-size:cover!important;
+  background-position:center center!important;
+}
+
+/* Keep enough scene detail visible behind the glass panels. */
+.app-shell:after{
+  background:linear-gradient(90deg,rgba(1,8,14,.18) 0%,rgba(1,8,14,.12) 26%,rgba(1,8,14,.48) 62%,rgba(1,8,14,.70) 100%),linear-gradient(180deg,rgba(2,8,14,.05),rgba(2,8,14,.27))!important;
+}
