@@ -167,8 +167,8 @@ def test_progression_uses_cached_snapshot_and_names(test_app):
     with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
         r = c.get("/progression")
         assert r.status_code == 200
-        assert "1,234,567 SP" in r.text
-        assert "Gunnery" in r.text
+        assert '"total_sp": 1234567' in r.text
+        assert '"skill": "Gunnery"' in r.text
 
 
 def test_ess_history_shows_character_name_without_assignment_controls(test_app):
@@ -298,8 +298,8 @@ def test_dashboard_page_loads(test_app):
     with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
         r=c.get("/dashboard")
         assert r.status_code == 200
-        assert "Performance Dashboard" in r.text
-        assert "Average ISK per Hour" in r.text
+        assert '"page": "dashboard"' in r.text
+        assert '"perf":' in r.text
 
 
 def test_today_wallet_cards_sum_all_connected_characters_without_runs(test_app):
