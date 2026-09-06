@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "scripts": {
+    "build:frontend": "esbuild static/react/main.tsx --bundle --format=iife --global-name=EveRattingReact --target=es2020 --outfile=static/react/app.js --minify"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9",
+    "typescript": "5.9.2"
+  }
+}
