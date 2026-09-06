@@ -3,7 +3,7 @@ services:
     name: eve-ratting-tracker
     runtime: python
     plan: 0.5c-512mb
-    buildCommand: pip install -r requirements.txt
+    buildCommand: npm install --no-audit --no-fund && npm run build:frontend && pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: checksPass
