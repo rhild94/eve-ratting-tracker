@@ -134,7 +134,7 @@ def test_progression_page_loads_without_snapshots(test_app):
     with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
         r = c.get("/progression")
         assert r.status_code == 200
-        assert "Character Progression" in r.text
+        assert '"page": "progression"' in r.text
 
 
 def test_session_update_api(test_app):
