@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="9.0.3"
+APP_VERSION="9.1.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -500,8 +500,14 @@ def session_performance(days=30):
         seconds=max(1,(parse_iso(ses["ended_at"])-parse_iso(ses["started_at"])).total_seconds())
         ratting_hr=ratting/seconds*3600
         total_hr=total/seconds*3600
+        participants=set()
+        for r in rr:
+            try:
+                participants.update(int(x) for x in json.loads(r["participants_json"] or "[]"))
+            except Exception:
+                pass
         row={"id":ses["id"],"date":end.strftime("%b %d"),"ended_at":ses["ended_at"],"duration_seconds":seconds,
-             "sites":len(rr),"bounty":bounty,"ess":ess_total,"loot":loot,"salvage":salvage,"bonus":bonus,
+             "sites":len(rr),"participants":len(participants),"bounty":bounty,"ess":ess_total,"loot":loot,"salvage":salvage,"bonus":bonus,
              "ratting_isk":ratting,"total_isk":total,"ratting_isk_hr":ratting_hr,"total_isk_hr":total_hr}
         rows.append(row)
         total_income+=total;total_ratting+=ratting;total_seconds+=seconds;total_sites+=len(rr)
