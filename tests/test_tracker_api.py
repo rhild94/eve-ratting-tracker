@@ -386,3 +386,34 @@ def test_hd_background_payload_is_complete_webp(test_app):
         assert r.content[8:12] == b"WEBP"
         assert int.from_bytes(r.content[4:8],"little")+8 == len(r.content)
         assert len(r.content) > 30000
+
+
+def test_beta_v2_fits_are_persisted(test_app):
+    base = test_app["base_url"]
+    with httpx.Client(base_url=base, timeout=5) as c:
+        payload={"id":"fit-test-1","character_id":90000001,"character_name":"Playwright Pilot","ship":"Raven","name":"Angel Cruise","raw_text":"[Raven, Angel Cruise]","groups":{"high":[{"name":"Cruise Missile Launcher II","quantity":6}]},"ship_type_id":638}
+        r=c.post("/api/fits",json=payload);assert r.status_code==200,r.text
+        data=c.get("/api/fits").json()["fits"];assert len(data)==1
+        assert data[0]["ship"]=="Raven" and data[0]["groups"]["high"][0]["quantity"]==6
+        assert c.delete("/api/fits/fit-test-1").status_code==200
+        assert c.get("/api/fits").json()["fits"]==[]
+
+def test_beta_v2_run_stores_fit_selection(test_app):
+    base=test_app["base_url"]
+    with httpx.Client(base_url=base,timeout=5) as c:
+        selection={"90000001":{"id":"fit-1","ship":"Raven","name":"Angel Cruise"}}
+        r=c.post("/api/run/start",json={"anomaly":"Angel Haven","variant":"Default","participants":[90000001],"notes":"","fit_selection":selection})
+        assert r.status_code==200,r.text
+        rid=r.json()["run"]["id"]
+        saved=c.get(f"/api/run/{rid}").json()["run"]
+        assert saved["fit_selection"]["90000001"]["ship"]=="Raven"
+
+def test_non_sold_escalation_value_is_cleared_by_backend(test_app):
+    base=test_app["base_url"]
+    with httpx.Client(base_url=base,timeout=5) as c:
+        r=c.post("/api/run/start",json={"anomaly":"Angel Hub","variant":"Default","participants":[90000001],"notes":""});rid=r.json()["run"]["id"]
+        assert c.post(f"/api/run/{rid}/complete").status_code==200
+        assert c.post(f"/api/run/{rid}/bonus",json={"escalation_name":"Angel Capital Staging","escalation_status":"Sold","escalation_sale_value":30000000}).status_code==200
+        assert c.post(f"/api/run/{rid}/bonus",json={"escalation_name":"Angel Capital Staging","escalation_status":"Pending","escalation_sale_value":30000000}).status_code==200
+        saved=c.get(f"/api/run/{rid}").json()["run"]
+        assert saved["escalation_status"]=="Pending" and saved["escalation_sale_value"]==0
