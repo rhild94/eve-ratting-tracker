@@ -2,7 +2,7 @@ name: Ratting Tracker Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, web-hosted-v1]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -18,6 +18,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and build React frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:frontend
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,6 +45,17 @@ jobs:
 
       - name: Run regression suite
         run: python -m pytest tests -v --tb=short
+
+      - name: Commit generated frontend bundle
+        if: success() && github.event_name == 'push'
+        run: |
+          if ! git diff --quiet -- static/react/app.js; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add static/react/app.js
+            git commit -m "Build React frontend bundle"
+            git push
+          fi
 
       - name: Build downloadable tracker package
         if: success()

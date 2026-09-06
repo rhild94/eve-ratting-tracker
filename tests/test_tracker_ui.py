@@ -19,7 +19,7 @@ def complete_site(page):
 
 
 def test_dashboard_loads_and_can_start_without_esi(page):
-    expect(page.locator("h1")).to_contain_text("Ratting Tracker")
+    expect(page.locator("h1")).to_contain_text("Site Tracker")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
     start_site(page)
     expect(page.locator(".running-head")).to_contain_text("W-16DY")
@@ -47,7 +47,6 @@ def test_escalation_sale_value_is_saved_from_completion_modal(page):
     page.check("#gotEsc")
     page.select_option("#escName", index=1)
     page.select_option("#escStatus", label="Sold")
-    page.click("summary:has-text('Optional details now')")
     page.fill("#escValue", "123456789")
     expect(page.locator("#escValue")).to_have_value("123,456,789")
     page.click("#saveNext")
@@ -137,8 +136,8 @@ def test_esi_status_stays_below_sync_button(page):
 
 def test_unconfigured_esi_keeps_local_tracker_ready(page):
     page.evaluate("""() => {
-      DATA.esi.configured = false;
-      DATA.esi.connected_characters = 0;
+      window.DATA.esi.configured = false;
+      window.DATA.esi.connected_characters = 0;
       renderEsiStatus();
     }""")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
@@ -159,7 +158,6 @@ def test_history_shows_escalation_sale_value(page):
     page.check("#gotEsc")
     page.select_option("#escName", index=1)
     page.select_option("#escStatus", label="Sold")
-    page.click("summary:has-text('Optional details now')")
     page.fill("#escValue", "30000000")
     page.click("#saveNext")
     page.goto(page.url.rstrip("/") + "/history")
@@ -196,3 +194,73 @@ def test_history_income_chart_has_hover_tooltip(page):
     page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5)
     # Tooltip appears when cursor is near a plotted date; canvas logic is covered by existence and JS execution.
     expect(page.locator("#chartTooltip")).to_have_count(1)
+
+
+def test_start_timer_appears_immediately(page):
+    page.select_option("#anomaly", label="Angel Haven")
+    started = time.monotonic()
+    page.click("#startBtn")
+    expect(page.locator("#timer")).to_be_visible(timeout=1000)
+    assert time.monotonic() - started < 3.0
+    expect(page.locator(".starting-cloud, #completeBtn")).to_have_count(1)
+
+
+def test_completion_value_fields_are_conditional(page):
+    start_site(page, "Angel Hub")
+    complete_site(page)
+
+    expect(page.locator("#escValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.check("#gotEsc")
+    expect(page.locator("#escValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.select_option("#escStatus", label="Sold")
+    expect(page.locator("#escValueRow")).not_to_have_class(re.compile(r"\bhidden\b"))
+
+    expect(page.locator("#rareValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.check("#gotRare")
+    expect(page.locator("#rareValueRow")).to_have_class(re.compile(r"\bhidden\b"))
+    page.check("#gotRareLoot")
+    expect(page.locator("#rareValueRow")).not_to_have_class(re.compile(r"\bhidden\b"))
+
+
+def test_character_can_be_designated_main(page):
+    expect(page.locator(".participant-wrap")).to_have_count(1)
+    btn = page.locator(".role-action")
+    if "Set as main" in btn.inner_text():
+        btn.click()
+    expect(page.locator(".role-action.is-main")).to_contain_text("Main")
+    expect(page.locator(".character-copy small")).to_contain_text("Main character")
+
+
+def test_history_heat_scale_is_visible(page):
+    start_site(page)
+    complete_site(page)
+    page.click("#saveNext")
+    page.goto(page.url.rstrip("/") + "/history")
+    expect(page.locator(".income-legend")).to_contain_text("Lower ISK")
+    expect(page.locator(".income-legend")).to_contain_text("Higher ISK")
+    colors = page.evaluate("() => [incomeColor(0).css, incomeColor(100000000).css]")
+    assert colors[0] != colors[1]
+
+
+def test_running_tracker_shows_wave_composition_and_trigger(page):
+    start_site(page, "Angel Haven")
+    expect(page.locator(".wave-progress-card")).to_be_visible()
+    expect(page.locator(".wave-composition")).to_be_visible()
+    expect(page.locator(".wave-composition")).to_contain_text("Current wave")
+    expect(page.locator(".wave-composition .rat-row").first).to_be_visible()
+    # Gas Haven's initial wave has an explicit last-Battleship trigger.
+    expect(page.locator(".trigger-card")).to_contain_text("last Battleship")
+
+
+def test_eve_shell_and_clock_are_visible(page):
+    expect(page.locator(".side-nav")).to_be_visible()
+    expect(page.locator(".eve-time")).to_be_visible()
+    expect(page.locator("[data-eve-clock]")).not_to_have_text("--:--:--")
+
+
+def test_dashboard_uses_session_performance_graph(page):
+    page.goto(page.url.rstrip("/") + "/dashboard")
+    expect(page.locator("h1")).to_contain_text("Performance Dashboard")
+    expect(page.locator("#sessionChart")).to_be_visible()
+    expect(page.locator(".metric-card")).to_have_count(4)
+    expect(page.locator("body")).to_contain_text("Avg ISK/h")

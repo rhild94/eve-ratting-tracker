@@ -1,6 +1,6 @@
 # EVE Ratting Tracker
 
-**Current version: 8.3.0**
+**Current version: 9.1.0**
 
 Private development repository for the EVE Online ratting tracker.
 
@@ -25,3 +25,7 @@ python -m pytest tests -v
 ```
 
 GitHub Actions runs the API and browser regression suite automatically for every push to `main` and for pull requests.
+
+
+## Frontend architecture (v9)
+The hosted UI is now a React + TypeScript application mounted by FastAPI. FastAPI/PostgreSQL remain the backend and persistence layer. The live tracker keeps a temporary compatibility adapter around the proven site/timer engine while Dashboard, History, Progression, shell/navigation, and edit modals are React components. This adapter will be removed incrementally after hosted parity testing.

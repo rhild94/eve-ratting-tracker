@@ -1,5 +1,6 @@
 
-let DATA=window.INITIAL_DATA;
+window.DATA=window.INITIAL_DATA;
+let DATA=window.DATA;
 let timerHandle=null;
 const fmtM=v=>(Number(v||0)/1e6).toFixed(2)+"m";
 const $=s=>document.querySelector(s);
@@ -66,12 +67,28 @@ function renderStats(){
  $("#statIskHr").textContent=fmtM(DATA.stats.avg_isk_hr);
 }
 function participantCard(c){
- return `<label class="participant-card">
+ const main=c.role==="main";
+ return `<div class="participant-wrap ${main?"main-character":"alt-character"}">
+  <label class="participant-card">
    <input type="checkbox" value="${c.id}" checked>
    <img src="${c.portrait}" alt="${escapeHtml(c.name)}">
-   <span>${escapeHtml(c.name)}</span>
+   <span class="character-copy"><span>${escapeHtml(c.name)}</span><small>${main?"Main character":"Alt"}</small></span>
    <b>✓</b>
- </label>`;
+  </label>
+  <button type="button" class="role-action ${main?"is-main":""}" data-character-id="${c.id}" ${main?"disabled":""}>${main?"★ Main":"Set as main"}</button>
+ </div>`;
+}
+function setupCharacterRoles(){
+ document.querySelectorAll(".role-action:not(.is-main)").forEach(btn=>{
+  btn.addEventListener("click",async()=>{
+   btn.disabled=true;btn.textContent="Saving…";
+   try{
+    const r=await fetch(`/api/character/${btn.dataset.characterId}/main`,{method:"POST"});
+    if(!r.ok)throw new Error("Could not update character role.");
+    await refreshDashboard();
+   }catch(err){alert(err.message);btn.disabled=false;btn.textContent="Set as main";}
+  });
+ });
 }
 function startForm(){
  const opts=DATA.anomalies.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
@@ -80,7 +97,7 @@ function startForm(){
  <div class="field"><label>Variant</label><select id="variant"></select><div id="variantHint" class="hint"></div></div>
  <div class="field full"><label>Participants</label><div class="participants">${DATA.characters.map(participantCard).join("")}</div></div>
  <div class="field full"><label>Quick note <span class="muted">(optional)</span></label><input id="runNotes" placeholder="Only if something unusual happened"></div>
- <div class="start-row"><button id="startBtn" class="start big">▶ Start Site</button><span class="muted">Timer starts immediately after the request succeeds.</span></div>
+ <div class="start-row"><button id="startBtn" class="start big">▶ Start Site</button></div>
  </div>`;
 }
 function setupVariants(){
@@ -105,39 +122,54 @@ function waveRows(w){
 }
 function runningView(run){
  const waves=(window.SITE_DATA[run.anomaly]?.variants||{})[run.variant||"Default"]||[];
- let wave=Number(localStorage.getItem("wave_"+run.id)||0); wave=Math.max(0,Math.min(wave,Math.max(0,waves.length-1)));
+ let wave=Number(localStorage.getItem("wave_"+run.id)||0);wave=Math.max(0,Math.min(wave,Math.max(0,waves.length-1)));
+
  const renderWave=()=>{
-   const box=$("#waveBox"); if(!box)return;
-   if(!waves.length){box.innerHTML=`<div class="helper-card"><b>Site Helper</b><p class="hint">Detailed waves are intentionally omitted for this unverified variant.</p></div>`;return;}
-   const w=waves[wave], note=w[2]||"";
-   box.innerHTML=`<div class="helper-card">
-    <div class="helper-head"><div><span class="small-title">Current wave</span><h3>${escapeHtml(w[0])}</h3></div><b>${wave+1}/${waves.length}</b></div>
-    ${waveRows(w)}
-    ${note?`<div class="${note.startsWith("TRIGGER")?"trigger":"wave-note"}">${note.startsWith("TRIGGER")?"⚠ ":""}${escapeHtml(note)}</div>`:""}
-    <div class="helper-nav"><button id="prevWave" ${wave===0?"disabled":""}>← Previous</button><button id="nextWave" class="good" ${wave===waves.length-1?"disabled":""}>${wave===waves.length-1?"Final Wave":"✓ Next Wave →"}</button></div>
-   </div>`;
-   $("#prevWave")?.addEventListener("click",()=>{if(wave>0){wave--;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
-   $("#nextWave")?.addEventListener("click",()=>{if(wave<waves.length-1){wave++;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
+  const box=$("#waveBox");if(!box)return;
+  if(!waves.length){box.innerHTML=`<div class="helper-card"><div class="helper-head"><div><span class="small-title">Site helper</span><h3>Wave data unavailable</h3></div></div><p class="hint">Detailed waves are intentionally omitted for this unverified variant.</p></div>`;return;}
+  const w=waves[wave],note=w[2]||"",isTrigger=note.startsWith("TRIGGER");
+  const steps=waves.map((x,i)=>`<button class="wave-step ${i===wave?"current":i<wave?"past":""}" data-wave="${i}" title="${escapeHtml(x[0])}">${i+1}</button>`).join("");
+  box.innerHTML=`<div class="wave-progress-card">
+    <div class="wave-progress-head"><span>Wave Progress</span><b>Wave ${wave+1} of ${waves.length}</b></div>
+    <div class="wave-stepper">${steps}</div>
+   </div>
+   <div class="wave-detail-grid">
+    <div class="helper-card wave-composition">
+      <div class="helper-head"><div><span class="small-title">Current wave</span><h3>${escapeHtml(w[0])}</h3></div><b>${wave+1}/${waves.length}</b></div>
+      ${waveRows(w)}
+      ${!isTrigger && note?`<div class="wave-note">${escapeHtml(note)}</div>`:""}
+    </div>
+    <aside class="trigger-card ${isTrigger?"has-trigger":"no-trigger"}">
+      <span class="small-title">Trigger</span>
+      ${isTrigger?`<b>⚠ ${escapeHtml(note.replace(/^TRIGGER:\s*/,""))}</b><small>Use this trigger instruction for the current wave.</small>`:`<b>No specific trigger</b><small>${note?escapeHtml(note):"Follow the listed wave composition."}</small>`}
+    </aside>
+   </div>
+   <div class="helper-nav wave-nav"><button id="prevWave" ${wave===0?"disabled":""}>← Previous Wave</button><button id="nextWave" class="good" ${wave===waves.length-1?"disabled":""}>${wave===waves.length-1?"Final Wave":"Next Wave →"}</button></div>`;
+  box.querySelectorAll(".wave-step").forEach(btn=>btn.addEventListener("click",()=>{wave=Number(btn.dataset.wave);localStorage.setItem("wave_"+run.id,wave);renderWave()}));
+  $("#prevWave")?.addEventListener("click",()=>{if(wave>0){wave--;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
+  $("#nextWave")?.addEventListener("click",()=>{if(wave<waves.length-1){wave++;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
  };
- $("#trackerContent").innerHTML=`<div class="running-head"><div><div class="eyebrow">${escapeHtml(run.system_name||"Unknown system")}</div><h2>${escapeHtml(run.anomaly)} <span>· ${escapeHtml(run.variant||"Default")}</span></h2></div><div id="timer" class="timer">00:00:00</div></div>
- <div id="waveBox"></div>
- <div class="run-actions"><button id="pauseBtn" class="secondary">${run.is_paused?"▶ Resume Timer":"⏸ Pause Timer"}</button><button id="completeBtn" class="complete big">✓ Complete Site</button><button id="cancelBtn" class="danger">Delete Test / Cancel</button></div>`;
+
+ $("#trackerContent").innerHTML=`<div class="running-site-card">
+  <div class="running-head">
+   <div><div class="eyebrow">${escapeHtml(run.system_name||"Unknown system")}</div><h2>${escapeHtml(run.anomaly)} <span>· ${escapeHtml(run.variant||"Default")}</span></h2><span class="status-chip">Running</span></div>
+   <div class="timer-block"><span>Current Site Time</span><div id="timer" class="timer">00:00:00</div></div>
+  </div>
+  <div class="run-actions top-run-actions"><button id="pauseBtn" class="secondary">${run.is_paused?"▶ Resume Timer":"⏸ Pause Timer"}</button><button id="completeBtn" class="complete big">✓ Complete Site</button><button id="cancelBtn" class="danger">Delete Test / Cancel</button></div>
+ </div>
+ <div id="waveBox"></div>`;
  renderWave();
+
  if(timerHandle)clearInterval(timerHandle);
  const start=new Date(run.started_at);
  const displaySeconds=()=>{
-   let end=Date.now(), paused=Number(run.paused_seconds||0);
-   if(run.paused_at) paused += Math.max(0,(end-new Date(run.paused_at).getTime())/1000);
-   return Math.max(0,Math.floor((end-start.getTime())/1000-paused));
+  let end=Date.now(),paused=Number(run.paused_seconds||0);
+  if(run.paused_at)paused+=Math.max(0,(end-new Date(run.paused_at).getTime())/1000);
+  return Math.max(0,Math.floor((end-start.getTime())/1000-paused));
  };
- const tick=()=>{let s=displaySeconds();$("#timer").textContent=[Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(x=>String(x).padStart(2,"0")).join(":");$("#timer").classList.toggle("paused",!!run.is_paused)};tick();timerHandle=setInterval(tick,1000);
- $("#pauseBtn").addEventListener("click",async()=>{
-   const b=$("#pauseBtn");b.disabled=true;
-   const r=await fetch(`/api/run/${run.id}/pause`,{method:"POST"}),j=await r.json();
-   if(r.ok){run=j.run;DATA.active=j.run;b.textContent=run.is_paused?"▶ Resume Timer":"⏸ Pause Timer";tick();}
-   else alert(j.error||"Could not pause timer.");
-   b.disabled=false;
- });
+ const tick=()=>{let sec=displaySeconds();$("#timer").textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");$("#timer").classList.toggle("paused",!!run.is_paused)};
+ tick();timerHandle=setInterval(tick,1000);
+ $("#pauseBtn").addEventListener("click",async()=>{const b=$("#pauseBtn");b.disabled=true;const r=await fetch(`/api/run/${run.id}/pause`,{method:"POST"}),j=await r.json();if(r.ok){run=j.run;DATA.active=j.run;b.textContent=run.is_paused?"▶ Resume Timer":"⏸ Pause Timer";tick()}else alert(j.error||"Could not pause timer.");b.disabled=false});
  $("#completeBtn").addEventListener("click",()=>completeRun(run.id));
  $("#cancelBtn").addEventListener("click",()=>deleteRunFromTracker(run.id));
 }
@@ -158,7 +190,7 @@ function renderRecent(){
 function render(){
  renderStats();renderSession();renderRecent();renderEsiStatus();
  if(DATA.active)runningView(DATA.active);
- else{$("#trackerContent").innerHTML=startForm();setupVariants();$("#startBtn").addEventListener("click",startRun);}
+ else{$("#trackerContent").innerHTML=startForm();setupVariants();setupCharacterRoles();$("#startBtn").addEventListener("click",startRun);}
 }
 async function refreshDashboard(){
  const r=await fetch("/api/dashboard"); if(r.ok){DATA=await r.json();render();}
@@ -171,20 +203,43 @@ async function refreshBackgroundStatus(){
   renderStats();renderRecent();renderSession();renderEsiStatus();
  }catch{}
 }
+function startingView(payload,clickedAt){
+ if(timerHandle)clearInterval(timerHandle);
+ $("#trackerContent").innerHTML=`<div class="running-head"><div><div class="eyebrow">Starting site…</div><h2>${escapeHtml(payload.anomaly)} <span>· ${escapeHtml(payload.variant||"Default")}</span></h2></div><div id="timer" class="timer">00:00:00</div></div>
+ <div class="starting-cloud"><span class="pulse-dot"></span><div><b>Timer started locally</b><small>Saving the site start to the cloud…</small></div></div>
+ <div class="run-actions"><button class="secondary" disabled>Saving start…</button></div>`;
+ const started=new Date(clickedAt).getTime();
+ const tick=()=>{
+  const sec=Math.max(0,Math.floor((Date.now()-started)/1000));
+  const timer=$("#timer");if(timer)timer.textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");
+ };
+ tick();timerHandle=setInterval(tick,250);
+}
+
 async function startRun(){
  const btn=$("#startBtn");btn.disabled=true;setStatus("Starting…");
  const participants=[...document.querySelectorAll(".participant-card input:checked")].map(x=>Number(x.value));
- const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,notes:$("#runNotes").value};
- const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
+ const clickedAt=new Date().toISOString();
+ const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,notes:$("#runNotes").value,client_started_at:clickedAt};
+ if(!participants.length){alert("Choose at least one participant.");btn.disabled=false;setStatus("");return;}
+ startingView(payload,clickedAt);
+ const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),60000);
  try{
   const r=await fetch("/api/run/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:controller.signal});
   let j={}; try{j=await r.json()}catch{}
   if(!r.ok)throw new Error(j.error||`Could not start (${r.status})`);
   DATA.active=j.run;DATA.session=DATA.session||{id:j.session_id,sites:0,bounty:0};setStatus("Local data saved ✓ · ESI pending");renderSession();runningView(j.run);
  }catch(err){
-  alert(err.name==="AbortError"?"Start request timed out. Please try again.":"Could not start site: "+err.message);
-  btn.disabled=false;setStatus("");
- }finally{clearTimeout(timer);}
+  try{
+   const check=await fetch("/api/dashboard");if(check.ok){
+    DATA=await check.json();
+    if(DATA.active){setStatus("Site start confirmed ✓");render();return;}
+   }
+  }catch{}
+  if(timerHandle)clearInterval(timerHandle);
+  alert(err.name==="AbortError"?"The cloud took too long to confirm the site start. No active site was found.":"Could not start site: "+err.message);
+  render();setStatus("");
+ }finally{clearTimeout(timeout);}
 }
 async function completeRun(id){
  $("#completeBtn").disabled=true;setStatus("Completing…");
@@ -197,30 +252,41 @@ function showQuickResult(run,escalations,bountyPending){
  const m=$("#modalContent"), esc=escalations.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
  m.innerHTML=`<div class="modal-head"><div><span class="eyebrow">Site complete</span><h2>${escapeHtml(run.anomaly)}</h2></div><button id="closeResult" class="icon-btn">×</button></div>
  <div class="result-summary"><div><span>Time</span><b>${run.duration_label}</b></div><div><span>Bounty</span><b>${bountyPending?"Pending ESI sync":fmtM(run.combined_bounty)}</b></div><div><span>Bounty ISK/hr</span><b>${bountyPending?"—":fmtM(run.isk_hr)}</b></div></div>
- <p class="hint">Only mark bonuses now. Sale/value details can be added later in History.</p>
+ <p class="hint">Only the details relevant to this result will appear.</p>
  <div class="quick-options">
   <label class="toggle-row"><input id="gotEsc" type="checkbox"><span>Escalation received</span></label>
   <div id="escFields" class="conditional hidden"><select id="escName"><option value="">Select escalation</option>${esc}</select><select id="escStatus"><option>Pending</option><option>Sold</option><option>Ran Myself</option><option>Expired</option></select></div>
+  <label id="escValueRow" class="conditional-value hidden">Escalation sale value<input id="escValue" class="isk-input" inputmode="numeric" value=""></label>
   <label class="toggle-row"><input id="gotRare" type="checkbox"><span>Rare spawn</span></label>
-  <div id="rareFields" class="conditional hidden"><select id="rareType"><option>Commander</option><option>Dreadnought</option><option>Titan</option><option>Other</option></select></div>
+  <div id="rareFields" class="conditional hidden"><select id="rareType"><option>Commander</option><option>Dreadnought</option><option>Titan</option><option>Other</option></select>
+    <label class="mini-toggle"><input id="gotRareLoot" type="checkbox"><span>Loot / value dropped</span></label></div>
+  <label id="rareValueRow" class="conditional-value hidden">Rare loot / value<input id="rareValue" class="isk-input" inputmode="numeric" value=""></label>
  </div>
- <details><summary>Optional details now</summary><div class="details-grid"><label>Escalation sale value<input id="escValue" class="isk-input" inputmode="numeric" value=""></label><label>Rare loot/value<input id="rareValue" class="isk-input" inputmode="numeric" value=""></label><label class="full">Note<input id="bonusNote"></label></div></details>
+ <label class="result-note">Note <span class="muted">(optional)</span><input id="bonusNote"></label>
  <div class="modal-actions"><button id="saveNext" class="good big">Save & Next Site</button></div>`;
  bindIskMask($("#escValue")); bindIskMask($("#rareValue"));
- $("#gotEsc").onchange=e=>$("#escFields").classList.toggle("hidden",!e.target.checked);
- $("#gotRare").onchange=e=>$("#rareFields").classList.toggle("hidden",!e.target.checked);
+ const updateFields=()=>{
+  const gotEsc=$("#gotEsc").checked, sold=gotEsc && $("#escStatus").value==="Sold";
+  const gotRare=$("#gotRare").checked, gotLoot=gotRare && $("#gotRareLoot").checked;
+  $("#escFields").classList.toggle("hidden",!gotEsc);
+  $("#escValueRow").classList.toggle("hidden",!sold);
+  $("#rareFields").classList.toggle("hidden",!gotRare);
+  $("#rareValueRow").classList.toggle("hidden",!gotLoot);
+ };
+ $("#gotEsc").onchange=updateFields;$("#escStatus").onchange=updateFields;
+ $("#gotRare").onchange=updateFields;$("#gotRareLoot").onchange=updateFields;
  $("#closeResult").onclick=()=>finishResult(false,run.id);
  $("#saveNext").onclick=()=>finishResult(true,run.id);
- showModal();
+ updateFields();showModal();
 }
 async function finishResult(save,id){
  const btn=$("#saveNext"); if(btn){btn.disabled=true;btn.textContent="Saving…";}
  const payload={
   escalation_name:$("#gotEsc").checked?$("#escName").value:"",
   escalation_status:$("#gotEsc").checked?$("#escStatus").value:"",
-  escalation_sale_value:rawIsk($("#escValue").value),
+  escalation_sale_value:$("#gotEsc").checked && $("#escStatus").value==="Sold"?rawIsk($("#escValue").value):0,
   rare_spawn_type:$("#gotRare").checked?$("#rareType").value:"",
-  rare_spawn_value:rawIsk($("#rareValue").value),
+  rare_spawn_value:$("#gotRare").checked && $("#gotRareLoot").checked?rawIsk($("#rareValue").value):0,
   notes:$("#bonusNote").value||""
  };
  try{

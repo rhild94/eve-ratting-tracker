@@ -1,13 +1,17 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Progression</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><div class="wrap"><header><div><h1>Character Progression</h1><p class="muted">Training queue and skill changes</p></div>
-<nav class="tabs"><a href="/">Tracker</a><a href="/history">History</a><a class="active" href="/progression">Progression</a></nav>
-<a class="button" href="/">← Tracker</a></header>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Progression · EVE Ratting Tracker</title><link rel="stylesheet" href="/static/style.css"></head>
+<body class="eve-ui"><div class="app-shell">
+<aside class="sidebar"><div class="brand"><div class="brand-mark">EVE</div><span>RATTING TRACKER</span></div>
+<nav class="side-nav"><a href="/dashboard"><span>⌂</span>Dashboard</a><a href="/"><span>◉</span>Tracker</a><a href="/history"><span>◷</span>History</a><a class="active" href="/progression"><span>◇</span>Progression</a></nav>
+<div class="sidebar-space"><span>ISK TODAY</span><b>FREEDOM TOMORROW</b></div></aside>
+<main class="main-stage"><header class="eve-topbar"><div><span class="system-kicker">CHARACTER DATA</span><h1>Character Progression</h1></div><div class="eve-time"><span>EVE TIME</span><b data-eve-clock>--:--:--</b><small>NEW EDEN TIME · UTC</small></div></header>
 <div class="progression-grid">
 {% for c in characters %}
-<section class="panel character-full">
-<div class="portrait-head"><img src="{{ c.portrait }}" alt=""><div><h2>{{ c.name }}</h2><div class="sp">{{ "{:,}".format(c.total_sp) }} SP</div><div class="muted">Last snapshot: {{ c.captured_at[:16].replace("T"," ") if c.captured_at else "Waiting for ESI sync" }}</div></div></div>{% if not c.has_snapshot %}<div class="warning">No progression snapshot yet. The page will populate after a successful ESI sync.</div>{% endif %}
+<section class="panel sci-panel character-full">
+<div class="portrait-head"><img src="{{ c.portrait }}" alt=""><div><h2>{{ c.name }}</h2><div class="sp">{{ "{:,}".format(c.total_sp) }} SP</div><div class="muted">Last snapshot: {{ c.captured_at[:16].replace("T"," ") if c.captured_at else "Waiting for ESI sync" }}</div></div></div>
+{% if not c.has_snapshot %}<div class="warning">No progression snapshot yet. The page will populate after a successful ESI sync.</div>{% endif %}
 {% if c.changes %}<h3>Recent completed skill changes</h3>{% for ch in c.changes %}<div class="change">↑ {{ ch.skill }} {{ ch.from }} → {{ ch.to }}</div>{% endfor %}{% endif %}
 <h3>Training queue</h3>
 <div class="queue-list">{% for q in c.queue %}<div class="queue-row"><span>{{ loop.index }}</span><b>{{ q.skill }}</b><span>Level {{ q.level }}</span><span>{{ q.finish_date[:16].replace("T"," ") if q.finish_date else "Queued" }}</span></div>{% else %}<div class="empty">No queue data.</div>{% endfor %}</div>
 </section>
-{% endfor %}</div></div></body></html>
+{% endfor %}</div>
+</main></div><script src="/static/eve_shell.js"></script></body></html>
