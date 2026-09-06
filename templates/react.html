@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ title }} · EVE Ratting Tracker</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="eve-ui">
+<div id="root"><div class="react-boot">Loading EVE Ratting Tracker…</div></div>
+<script>window.__BOOTSTRAP__={{ boot|tojson|safe }};</script>
+<script src="/static/site_data.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.28.4/babel.min.js"></script>
+<script type="text/babel" data-type="module" data-presets="typescript,react" src="/static/react/main.tsx"></script>
+</body>
+</html>
