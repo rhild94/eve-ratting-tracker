@@ -300,3 +300,44 @@ def test_dashboard_page_loads(test_app):
         assert r.status_code == 200
         assert "Performance Dashboard" in r.text
         assert "Ratting ISK per Hour" in r.text
+
+
+def test_today_wallet_cards_sum_all_connected_characters_without_runs(test_app):
+    import sqlite3
+    from datetime import datetime, timezone
+
+    db=test_app["work"] / "ratting_tracker.db"
+    now=datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    with sqlite3.connect(db) as c:
+        c.execute("DELETE FROM wallet_entries")
+        c.execute("""INSERT OR REPLACE INTO characters(
+            character_id,name,access_token,refresh_token,expires_at,connected_at,
+            cache_system_name,cache_ship_name,last_esi_sync,character_role
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (90000002,"Second Pilot","fake-token","fake-refresh",4102444800,now,
+         "W-16DY","Praxis",now,"alt"))
+        # Two characters: bounty must be combined even with zero tracked runs.
+        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (8101,90000001,now,3920000,0,"bounty_prizes","main tick","{}"))
+        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (8102,90000002,now,4080000,0,"bounty_prizes","alt tick","{}"))
+        # ESS is a day-level wallet metric and must not require a session/run.
+        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (8103,90000001,now,12230000,0,"ess_escrow_transfer","ESS","{}"))
+        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (8104,90000002,now,11770000,0,"ess_escrow_transfer","ESS","{}"))
+
+    with httpx.Client(base_url=test_app["base_url"],timeout=5) as c:
+        stats=c.get("/api/dashboard").json()["stats"]
+        assert stats["today_isk"] == pytest.approx(8000000)
+        assert stats["today_ess"] == pytest.approx(24000000)
+        assert stats["today_sites"] == 0
+        assert stats["today_seconds"] == 0
+
+    with sqlite3.connect(db) as c:
+        c.execute("DELETE FROM wallet_entries WHERE entry_id IN (8101,8102,8103,8104)")
+        c.execute("DELETE FROM characters WHERE character_id=90000002")
