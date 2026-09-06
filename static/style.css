@@ -266,40 +266,31 @@ canvas{background:rgba(3,15,25,.74)}
 }
 
 
-/* v9.1 per-tab artwork: art is integrated into the shell, never stretched behind the whole app */
+
+/* v9.1.1 restore cinematic full-page art; page-specific assets swap by tab */
 body.eve-ui{
-  background:#02080e !important;
-  background-image:
-    radial-gradient(circle at 74% 8%,rgba(22,85,117,.14),transparent 30%),
-    linear-gradient(180deg,#02080e,#030b12) !important;
-  background-attachment:scroll !important;
+  background-color:#02070c !important;
+  background-image:linear-gradient(180deg,rgba(1,7,12,.34),rgba(1,7,12,.56)),var(--page-art,url("/art/eve-bg.webp")) !important;
+  background-position:center center !important;
+  background-size:cover !important;
+  background-attachment:fixed !important;
+  background-repeat:no-repeat !important;
 }
 .page-dashboard{--page-art:url("/static/art_dashboard.webp")}
 .page-tracker{--page-art:url("/static/art_tracker.webp")}
 .page-history{--page-art:url("/static/art_history.webp")}
 .page-progression{--page-art:url("/static/art_progression.webp")}
-
-.sidebar{position:relative;overflow:hidden;background:rgba(2,9,15,.94)!important}
-.sidebar:after{
-  content:"";position:absolute;z-index:0;left:0;right:0;top:110px;bottom:0;
-  background-image:linear-gradient(180deg,rgba(2,9,15,.28),rgba(2,9,15,.82) 72%,rgba(2,9,15,.96)),var(--page-art);
-  background-size:auto 100%,cover;background-position:center,center;background-repeat:no-repeat;
-  opacity:.82;pointer-events:none;
+.sidebar{
+  position:relative;overflow:hidden;
+  background:linear-gradient(180deg,rgba(2,9,15,.62),rgba(2,8,14,.78)) !important;
 }
+.sidebar:after{display:none !important}
 .sidebar>.brand,.sidebar>.side-nav,.sidebar>.sidebar-space{position:relative;z-index:1}
-.eve-topbar{min-height:96px;gap:18px}
-.page-art{
-  flex:0 0 clamp(170px,19vw,300px);height:72px;margin-left:auto;
-  border:1px solid rgba(57,151,194,.48);border-radius:8px;overflow:hidden;
-  background-image:linear-gradient(90deg,rgba(2,10,17,.12),rgba(2,10,17,.48)),var(--page-art);
-  background-size:cover;background-position:center;
-  box-shadow:inset 0 0 24px rgba(57,151,194,.08),0 5px 20px rgba(0,0,0,.22);
+.eve-topbar{
+  min-height:96px;
+  background:linear-gradient(90deg,rgba(3,13,22,.62),rgba(4,18,29,.38),rgba(3,12,20,.58)) !important;
 }
-.topbar-right{margin-left:0}
-.main-stage:before{
-  content:"";position:fixed;z-index:-1;inset:0 0 0 190px;
-  background:radial-gradient(circle at 18% 18%,rgba(29,94,125,.08),transparent 28%);
-  pointer-events:none;
-}
-@media(max-width:1050px){.page-art{display:none}}
-@media(max-width:780px){.sidebar:after{display:none}.main-stage:before{display:none}}
+.page-art{display:none !important}
+.topbar-right{margin-left:auto}
+.main-stage{background:transparent !important}
+.main-stage:before{display:none !important}
