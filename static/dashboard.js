@@ -34,7 +34,7 @@ function hide(){tip.classList.add("hidden")}
 function show(pt,e){
  const r=canvas.parentElement.getBoundingClientRect(),x=pt.row,c=perfColor(x.ratting_isk_hr);
  const dur=Math.round(Number(x.duration_seconds||0)/60);
- tip.innerHTML=`<b>Session #${x.id} · ${x.date}</b><strong style="color:${c.css}">${isk(x.ratting_isk_hr)} ISK/hr</strong><span>Sites ran: ${x.sites}</span><span>Duration: ${Math.floor(dur/60)}h ${dur%60}m</span><span>Bounty: ${isk(x.bounty)}</span><span>ESS: ${isk(x.ess)}</span><span>Loot: ${isk(x.loot)}</span><span>Salvage: ${isk(x.salvage)}</span>`;
+ tip.innerHTML=`<b>Session #${x.id} · ${x.date}</b><strong style="color:${c.css}">${isk(x.ratting_isk_hr)} ISK/hr</strong><span>Participants: ${x.participants||0}</span><span>Sites ran: ${x.sites}</span><span>Duration: ${Math.floor(dur/60)}h ${dur%60}m</span><span>Bounty: ${isk(x.bounty)}</span><span>ESS: ${isk(x.ess)}</span><span>Loot: ${isk(x.loot)}</span><span>Salvage: ${isk(x.salvage)}</span>`;
  tip.classList.remove("hidden");const tw=tip.offsetWidth,th=tip.offsetHeight;tip.style.left=Math.min(Math.max(8,e.clientX-r.left+12),Math.max(8,r.width-tw-8))+"px";tip.style.top=Math.max(8,e.clientY-r.top-th-12)+"px";
 }
 canvas.addEventListener("mousemove",e=>{if(!pts.length)return hide();const rr=canvas.getBoundingClientRect(),x=e.clientX-rr.left;const p=pts.reduce((a,b)=>Math.abs(b.x-x)<Math.abs(a.x-x)?b:a);if(Math.abs(p.x-x)>50)return hide();show(p,e)});
