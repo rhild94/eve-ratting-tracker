@@ -10,12 +10,12 @@ import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from fastapi import FastAPI,Request,Form
-from fastapi.responses import HTMLResponse,RedirectResponse,JSONResponse
+from fastapi.responses import HTMLResponse,RedirectResponse,JSONResponse,Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.5.1"
+APP_VERSION="8.5.2"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -42,6 +42,27 @@ ESCALATIONS={
 app=FastAPI(title="EVE Ratting Tracker",version=APP_VERSION)
 app.mount("/static",StaticFiles(directory=BASE_DIR/"static"),name="static")
 templates=Jinja2Templates(directory=BASE_DIR/"templates")
+
+_HD_BACKGROUND_BYTES=None
+def load_hd_background():
+    global _HD_BACKGROUND_BYTES
+    if _HD_BACKGROUND_BYTES is None:
+        encoded="".join(
+            (BASE_DIR/"static"/f"hd_bg_{i:02d}.txt").read_text(encoding="utf-8").strip()
+            for i in range(1,9)
+        )
+        _HD_BACKGROUND_BYTES=base64.b64decode(encoded,validate=True)
+        if not (_HD_BACKGROUND_BYTES.startswith(b"RIFF") and b"WEBP" in _HD_BACKGROUND_BYTES[:16]):
+            raise ValueError("Invalid HD background image payload.")
+    return _HD_BACKGROUND_BYTES
+
+@app.get("/art/eve-bg.webp")
+async def eve_hd_background():
+    return Response(
+        content=load_hd_background(),
+        media_type="image/webp",
+        headers={"Cache-Control":"public, max-age=31536000, immutable"}
+    )
 DB=Path(os.getenv("TRACKER_DB_PATH",str(BASE_DIR/"ratting_tracker.db")))
 DB.parent.mkdir(parents=True,exist_ok=True)
 DB_PROCESS_LOCK=threading.RLock()
