@@ -1,3 +1,4 @@
+import pytest
 import httpx
 
 
@@ -249,3 +250,53 @@ def test_main_character_role_endpoint(test_app):
         chars = c.get("/api/dashboard").json()["characters"]
         assert chars[0]["id"] == 90000001
         assert chars[0]["role"] == "main"
+
+
+def test_bounty_tick_is_allocated_across_overlapping_sites(test_app):
+    import os
+    import sqlite3
+    import subprocess
+    import sys
+
+    db = test_app["work"] / "ratting_tracker.db"
+    with sqlite3.connect(db) as c:
+        c.execute("DELETE FROM wallet_entries")
+        c.execute("""INSERT INTO sessions(id,started_at,ended_at,status) VALUES(?,?,?,'complete')""",
+                  (101,"2026-09-05T12:00:00+00:00","2026-09-05T12:20:00+00:00"))
+        c.execute("""INSERT INTO runs(
+            id,anomaly,variant,started_at,ended_at,participants_json,notes,status,
+            combined_bounty,system_name,ships_json,session_id,paused_seconds
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                  (201,"Angel Haven","Gas Haven · Chemical Factory","2026-09-05T12:00:00+00:00",
+                   "2026-09-05T12:10:00+00:00","[90000001]","",'complete',0,"W-16DY","[]",101,0))
+        c.execute("""INSERT INTO runs(
+            id,anomaly,variant,started_at,ended_at,participants_json,notes,status,
+            combined_bounty,system_name,ships_json,session_id,paused_seconds
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                  (202,"Angel Haven","Gas Haven · Chemical Factory","2026-09-05T12:10:00+00:00",
+                   "2026-09-05T12:20:00+00:00","[90000001]","",'complete',0,"W-16DY","[]",101,0))
+        c.execute("""INSERT INTO wallet_entries(
+            entry_id,character_id,date,amount,balance,ref_type,description,raw_json
+        ) VALUES(?,?,?,?,?,?,?,?)""",
+                  (7001,90000001,"2026-09-05T12:20:00+00:00",20000000,0,"bounty_prizes","tick","{}"))
+
+    env=os.environ.copy()
+    env["TRACKER_DB_PATH"]=str(db)
+    env["ESI_AUTO_SYNC_INITIAL_DELAY_SECONDS"]="3600"
+    p=subprocess.run([sys.executable,"-c","import app; app.reconcile_bounties()"],
+                     cwd=test_app["work"],env=env,capture_output=True,text=True,timeout=15)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+    with sqlite3.connect(db) as c:
+        vals=[x[0] for x in c.execute("SELECT combined_bounty FROM runs WHERE id IN (201,202) ORDER BY id")]
+    assert vals[0] == pytest.approx(10000000, rel=1e-6)
+    assert vals[1] == pytest.approx(10000000, rel=1e-6)
+    assert sum(vals) == pytest.approx(20000000, rel=1e-6)
+
+
+def test_dashboard_page_loads(test_app):
+    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+        r=c.get("/dashboard")
+        assert r.status_code == 200
+        assert "Performance Dashboard" in r.text
+        assert "Ratting ISK per Hour" in r.text
