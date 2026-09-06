@@ -1,5 +1,5 @@
-import React,{useEffect,useState} from "https://esm.sh/react@19.1.1";
-import{createRoot}from"https://esm.sh/react-dom@19.1.1/client";
+import React,{useEffect,useState} from "react";
+import{createRoot}from"react-dom/client";
 declare global{interface Window{__BOOTSTRAP__:any;INITIAL_DATA:any;SESSION_CHART_DATA:any;SESSION_AVG:any;CHART_DATA:any}}
 const BOOT=window.__BOOTSTRAP__||{},path=window.location.pathname;
 const money=(v:any)=>Number(v||0),iskM=(v:any)=>`${(money(v)/1e6).toFixed(2)}m`;
