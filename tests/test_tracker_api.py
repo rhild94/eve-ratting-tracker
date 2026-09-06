@@ -341,3 +341,37 @@ def test_today_wallet_cards_sum_all_connected_characters_without_runs(test_app):
     with sqlite3.connect(db) as c:
         c.execute("DELETE FROM wallet_entries WHERE entry_id IN (8101,8102,8103,8104)")
         c.execute("DELETE FROM characters WHERE character_id=90000002")
+
+
+def test_wallet_entry_ids_are_scoped_per_character(test_app):
+    import sqlite3
+    from datetime import datetime, timezone
+
+    db=test_app["work"] / "ratting_tracker.db"
+    now=datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    with sqlite3.connect(db) as c:
+        c.execute("DELETE FROM wallet_entries")
+        c.execute("""INSERT OR REPLACE INTO characters(
+            character_id,name,access_token,refresh_token,expires_at,connected_at,
+            cache_system_name,cache_ship_name,last_esi_sync,character_role
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (90000002,"Second Pilot","fake-token","fake-refresh",4102444800,now,
+         "W-16DY","Praxis",now,"alt"))
+        # ESI journal entry ids can collide across characters. Both rows must survive.
+        same_entry_id=99112233
+        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (same_entry_id,90000001,now,3920000,0,"bounty_prizes","main","{}"))
+        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (same_entry_id,90000002,now,4080000,0,"bounty_prizes","alt","{}"))
+
+    with httpx.Client(base_url=test_app["base_url"],timeout=5) as c:
+        stats=c.get("/api/dashboard").json()["stats"]
+        assert stats["today_isk"] == pytest.approx(8000000)
+
+    with sqlite3.connect(db) as c:
+        rows=c.execute("SELECT character_id,amount FROM wallet_entries WHERE entry_id=? ORDER BY character_id",(same_entry_id,)).fetchall()
+        assert rows == [(90000001,3920000.0),(90000002,4080000.0)]
+        c.execute("DELETE FROM wallet_entries WHERE entry_id=?",(same_entry_id,))
+        c.execute("DELETE FROM characters WHERE character_id=90000002")
