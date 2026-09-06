@@ -19,7 +19,7 @@ def complete_site(page):
 
 
 def test_dashboard_loads_and_can_start_without_esi(page):
-    expect(page.locator("h1")).to_contain_text("Ratting Tracker")
+    expect(page.locator("h1")).to_contain_text("Site Tracker")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
     start_site(page)
     expect(page.locator(".running-head")).to_contain_text("W-16DY")
@@ -240,3 +240,27 @@ def test_history_heat_scale_is_visible(page):
     expect(page.locator(".income-legend")).to_contain_text("Higher ISK")
     colors = page.evaluate("() => [incomeColor(0).css, incomeColor(100000000).css]")
     assert colors[0] != colors[1]
+
+
+def test_running_tracker_shows_wave_composition_and_trigger(page):
+    start_site(page, "Angel Haven")
+    expect(page.locator(".wave-progress-card")).to_be_visible()
+    expect(page.locator(".wave-composition")).to_be_visible()
+    expect(page.locator(".wave-composition")).to_contain_text("Current wave")
+    expect(page.locator(".wave-composition .rat-row").first).to_be_visible()
+    # Gas Haven's initial wave has an explicit last-Battleship trigger.
+    expect(page.locator(".trigger-card")).to_contain_text("last Battleship")
+
+
+def test_eve_shell_and_clock_are_visible(page):
+    expect(page.locator(".side-nav")).to_be_visible()
+    expect(page.locator(".eve-time")).to_be_visible()
+    expect(page.locator("[data-eve-clock]")).not_to_have_text("--:--:--")
+
+
+def test_dashboard_uses_session_performance_graph(page):
+    page.goto(page.url.rstrip("/") + "/dashboard")
+    expect(page.locator("h1")).to_contain_text("Performance Dashboard")
+    expect(page.locator("#sessionChart")).to_be_visible()
+    expect(page.locator(".metric-card")).to_have_count(5)
+    expect(page.locator("body")).to_contain_text("Ratting ISK/hr")
