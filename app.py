@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.5.6"
+APP_VERSION="8.5.7"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -112,6 +112,55 @@ def col_exists(c,t,col):
     return any(r["name"]==col for r in c.execute(f"PRAGMA table_info({t})"))
 def ensure_col(c,t,d):
     if not col_exists(c,t,d.split()[0]):c.execute(f"ALTER TABLE {t} ADD COLUMN {d}")
+def ensure_character_entry_keys(c):
+    """ESI journal IDs are scoped to a character, not globally unique."""
+    tables={
+        "wallet_entries": (
+            "CREATE TABLE wallet_entries_new("
+            "entry_id INTEGER NOT NULL,character_id INTEGER NOT NULL,date TEXT NOT NULL,"
+            "amount REAL NOT NULL,balance REAL,ref_type TEXT,description TEXT,raw_json TEXT NOT NULL,"
+            "PRIMARY KEY(character_id,entry_id))",
+            "INSERT OR IGNORE INTO wallet_entries_new(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) "
+            "SELECT entry_id,character_id,date,amount,balance,ref_type,description,raw_json FROM wallet_entries"
+        ),
+        "ess_events": (
+            "CREATE TABLE ess_events_new("
+            "entry_id INTEGER NOT NULL,character_id INTEGER NOT NULL,date TEXT NOT NULL,amount REAL NOT NULL,"
+            "session_id INTEGER,match_status TEXT NOT NULL DEFAULT 'unassigned',"
+            "PRIMARY KEY(character_id,entry_id))",
+            "INSERT OR IGNORE INTO ess_events_new(entry_id,character_id,date,amount,session_id,match_status) "
+            "SELECT entry_id,character_id,date,amount,session_id,match_status FROM ess_events"
+        ),
+    }
+    if USE_POSTGRES:
+        for table in tables:
+            rows=c.execute("""SELECT tc.constraint_name,kcu.column_name,kcu.ordinal_position
+                              FROM information_schema.table_constraints tc
+                              JOIN information_schema.key_column_usage kcu
+                                ON tc.constraint_name=kcu.constraint_name
+                               AND tc.table_schema=kcu.table_schema
+                              WHERE tc.table_schema='public' AND tc.table_name=? AND tc.constraint_type='PRIMARY KEY'
+                              ORDER BY kcu.ordinal_position""",(table,)).fetchall()
+            cols=[r["column_name"] for r in rows]
+            if cols==["character_id","entry_id"]:
+                continue
+            if rows:
+                constraint=rows[0]["constraint_name"].replace('"','""')
+                c.execute(f'ALTER TABLE {table} DROP CONSTRAINT "{constraint}"')
+            c.execute(f"ALTER TABLE {table} ADD PRIMARY KEY(character_id,entry_id)")
+        return
+
+    for table,(create_sql,copy_sql) in tables.items():
+        info=c.execute(f"PRAGMA table_info({table})").fetchall()
+        pkcols=[r["name"] for r in sorted((r for r in info if int(r["pk"] or 0)>0),key=lambda r:int(r["pk"]))]
+        if pkcols==["character_id","entry_id"]:
+            continue
+        c.execute(f"DROP TABLE IF EXISTS {table}_new")
+        c.execute(create_sql)
+        c.execute(copy_sql)
+        c.execute(f"DROP TABLE {table}")
+        c.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+
 def init_db():
     with db() as c:
         stmts=[
@@ -129,6 +178,7 @@ def init_db():
         if not USE_POSTGRES:
             stmts=[x.replace("BIGSERIAL PRIMARY KEY","INTEGER PRIMARY KEY AUTOINCREMENT").replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL") for x in stmts]
         for q in stmts:c.execute(q)
+        ensure_character_entry_keys(c)
         if USE_POSTGRES:c.execute("INSERT INTO esi_sync_state(id) VALUES(1) ON CONFLICT(id) DO NOTHING")
         else:
             c.execute("INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1)")
@@ -262,13 +312,13 @@ async def resolve_type_names(type_ids):
     return out
 
 
-def auto_match_ess(c,eid,dt):
+def auto_match_ess(c,cid,eid,dt):
     cand=c.execute("SELECT id,ended_at FROM sessions WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 8").fetchall()
     p=[]
     for s in cand:
         x=(dt-parse_iso(s["ended_at"])).total_seconds()
         if 0<=x<=14400:p.append((x,s["id"]))
-    if len(p)==1:c.execute("UPDATE ess_events SET session_id=?,match_status='auto' WHERE entry_id=?",(p[0][1],eid))
+    if len(p)==1:c.execute("UPDATE ess_events SET session_id=?,match_status='auto' WHERE character_id=? AND entry_id=?",(p[0][1],cid,eid))
 
 async def sync_character(cid):
     row=await row_char(cid)
@@ -291,10 +341,10 @@ async def sync_character(cid):
         c.execute("INSERT INTO skill_snapshots(character_id,captured_at,total_sp,skills_json,queue_json) VALUES(?,?,?,?,?)",(cid,synced,int(skills.get("total_sp",0)),json.dumps(skills.get("skills",[])),json.dumps(queue)))
         c.execute("UPDATE characters SET cache_system_name=COALESCE(?,cache_system_name),cache_ship_name=COALESCE(?,cache_ship_name),last_esi_sync=? WHERE character_id=?",(cache_system,cache_ship,synced,cid))
         for j in journal:
-            c.execute("INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j)))
+            c.execute("INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(character_id,entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j)))
             if "ess" in (j.get("ref_type") or "").lower() and money(j.get("amount"))>0:
-                c.execute("INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?) ON CONFLICT(entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount"))))
-                try:auto_match_ess(c,j.get("id"),parse_iso(j.get("date")))
+                c.execute("INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?) ON CONFLICT(character_id,entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount"))))
+                try:auto_match_ess(c,cid,j.get("id"),parse_iso(j.get("date")))
                 except:pass
 
 async def status(cid):
