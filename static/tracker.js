@@ -1,5 +1,5 @@
 
-let DATA=window.INITIAL_DATA;
+window.DATA=window.INITIAL_DATA;\nlet DATA=window.DATA;
 let timerHandle=null;
 const fmtM=v=>(Number(v||0)/1e6).toFixed(2)+"m";
 const $=s=>document.querySelector(s);
