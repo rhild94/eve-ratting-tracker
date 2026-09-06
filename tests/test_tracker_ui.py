@@ -136,8 +136,8 @@ def test_esi_status_stays_below_sync_button(page):
 
 def test_unconfigured_esi_keeps_local_tracker_ready(page):
     page.evaluate("""() => {
-      DATA.esi.configured = false;
-      DATA.esi.connected_characters = 0;
+      window.DATA.esi.configured = false;
+      window.DATA.esi.connected_characters = 0;
       renderEsiStatus();
     }""")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
