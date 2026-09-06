@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/apply_beta_v2.yml'
       - 'scripts/apply_beta_v2.py'
+      - 'scripts/fix_beta_v2_compat.py'
   workflow_dispatch:
 
 permissions:
@@ -26,7 +27,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply integration patch
-        run: python scripts/apply_beta_v2.py
+        run: |
+          python scripts/apply_beta_v2.py
+          python scripts/fix_beta_v2_compat.py
       - name: Build frontend
         run: |
           npm install --no-audit --no-fund
@@ -42,7 +45,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.py static/react/main.tsx static/react/app.js templates/react.html tests/test_tracker_api.py
+          git add app.py static/react/main.tsx static/react/app.js static/beta_features_v2.js templates/react.html tests/test_tracker_api.py
           if git diff --cached --quiet; then
             echo "No integration changes to commit."
           else
