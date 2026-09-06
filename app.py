@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.5.7"
+APP_VERSION="9.0.0-react-preview"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -567,15 +567,14 @@ async def dashboard_payload():
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
     payload=await dashboard_payload()
-    return templates.TemplateResponse(request=request,name="index.html",context={"data":payload,"config_ok":bool(CLIENT_ID),"version":APP_VERSION})
+    boot={"page":"tracker","data":payload,"config_ok":bool(CLIENT_ID),"version":APP_VERSION}
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Tracker"})
 
 @app.get("/dashboard",response_class=HTMLResponse)
 async def dashboard_page(request:Request,days:int=30):
     perf=session_performance(days)
-    payload=await dashboard_payload()
-    return templates.TemplateResponse(request=request,name="dashboard.html",context={
-        "perf":perf,"chart_data":json.dumps(perf["rows"]),"data":payload,"version":APP_VERSION
-    })
+    boot={"page":"dashboard","perf":perf,"version":APP_VERSION}
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Dashboard"})
 
 @app.get("/setup",response_class=HTMLResponse)
 async def setup_page(request:Request):
@@ -842,7 +841,8 @@ async def progression_page(request:Request):
         except Exception:
             p={"total_sp":0,"queue":[],"changes":[],"captured_at":None,"has_snapshot":False}
         out.append({"id":x["character_id"],"name":x["name"],"portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
-    return templates.TemplateResponse(request=request,name="progression.html",context={"characters":out})
+    boot={"page":"progression","characters":out,"version":APP_VERSION}
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Progression"})
 
 @app.get("/history",response_class=HTMLResponse)
 async def history(request:Request,days:int=7):
@@ -869,7 +869,9 @@ async def history(request:Request,days:int=7):
     for b in buckets.values():
         total_income=sum(money(b[k]) for k in ["bounty","ess","loot","salvage","bonus"])
         b["isk_hr"]=total_income/b["seconds"]*3600 if b["seconds"] else 0
-    return templates.TemplateResponse(request=request,name="history.html",context={"days":days,"runs":[enrich(r) for r in rs[:200]],"sessions":sess[:100],"ess":[dict(e) for e in ess[:100]],"all_sessions":[dict(s) for s in alls],"chart_data":json.dumps(list(buckets.values()))})
+    history_data={"days":days,"runs":[enrich(r) for r in rs[:200]],"sessions":sess[:100],"ess":[dict(e) for e in ess[:100]],"all_sessions":[dict(s) for s in alls],"chart_data":list(buckets.values())}
+    boot={"page":"history","history":history_data,"version":APP_VERSION}
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"History"})
 
 @app.post("/ess/{eid}/assign")
 async def assign_ess(eid:int,session_id:str=Form("")):
