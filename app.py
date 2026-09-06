@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.5.3"
+APP_VERSION="8.5.4"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -467,14 +467,39 @@ async def dashboard_payload():
         recent=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 12").fetchall()
         ses=active_session(c); sr=c.execute("SELECT * FROM runs WHERE session_id=? ORDER BY id",(ses["id"],)).fetchall() if ses else []
     characters=[{"id":x["character_id"],"name":x["name"],"role":x["character_role"] or "alt","portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=64"} for x in chars]
-    today=utcnow().date(); stats={"today_isk":0,"today_sites":0,"today_seconds":0,"today_ess":0}
+    today=utcnow().date()
+    stats={"today_isk":0,"today_sites":0,"today_seconds":0,"today_ess":0}
+
+    # "Today's" wallet cards are direct ESI day totals across every currently
+    # connected character. They intentionally do not depend on tracker runs,
+    # participant attribution, sessions, or ESS auto-matching.
+    with db() as c:
+        wallet_today=c.execute("""SELECT w.character_id,w.date,w.amount,w.ref_type
+                                  FROM wallet_entries w
+                                  INNER JOIN characters ch ON ch.character_id=w.character_id
+                                  WHERE w.amount>0""").fetchall()
+    for w in wallet_today:
+        try:
+            if parse_iso(w["date"]).date()!=today:continue
+        except Exception:
+            continue
+        ref=(w["ref_type"] or "").lower()
+        if ref=="bounty_prizes":
+            stats["today_isk"]+=money(w["amount"])
+        if "ess" in ref:
+            stats["today_ess"]+=money(w["amount"])
+
+    # Site count/time and Bounty ISK/hr remain tracker-performance metrics.
+    # They use reconciled run bounty so unrelated wallet activity cannot
+    # inflate the measured ratting efficiency.
+    tracked_today_bounty=0.0
     for r in recent:
         if r["ended_at"] and parse_iso(r["ended_at"]).date()==today:
-            e=enrich(r);stats["today_isk"]+=money(r["combined_bounty"]);stats["today_sites"]+=1;stats["today_seconds"]+=e["duration_seconds"]
-    with db() as c:
-        for e in c.execute("SELECT * FROM ess_events"):
-            if parse_iso(e["date"]).date()==today:stats["today_ess"]+=money(e["amount"])
-    stats["avg_isk_hr"]=stats["today_isk"]/stats["today_seconds"]*3600 if stats["today_seconds"] else 0
+            e=enrich(r)
+            tracked_today_bounty+=money(r["combined_bounty"])
+            stats["today_sites"]+=1
+            stats["today_seconds"]+=e["duration_seconds"]
+    stats["avg_isk_hr"]=tracked_today_bounty/stats["today_seconds"]*3600 if stats["today_seconds"] else 0
     si=None
     if ses:
         done=[r for r in sr if r["status"]=="complete"]
