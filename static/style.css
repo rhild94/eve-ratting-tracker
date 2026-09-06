@@ -170,3 +170,29 @@ body.eve-ui:before{
  text-shadow:0 1px 4px #000;
 }
 .brand{background:linear-gradient(180deg,rgba(2,8,13,.18),rgba(2,8,13,.52));border-radius:7px}
+
+/* visual correction: match approved mockup more closely */
+body.eve-ui{background-position:center top;background-size:cover}
+body.eve-ui:before{background:linear-gradient(180deg,rgba(1,7,12,.46),rgba(1,7,12,.68))}
+body.eve-ui h1{color:#dff5ff;text-shadow:0 0 18px rgba(74,193,232,.08)}
+body.eve-ui .start{background:linear-gradient(180deg,#0f704d,#095137);border-color:#25d98e;color:#f2fff8;box-shadow:inset 0 0 18px rgba(44,239,158,.07),0 0 14px rgba(28,185,125,.06)}
+body.eve-ui .start:hover{filter:brightness(1.12)}
+.sidebar{background:
+ linear-gradient(180deg,rgba(3,11,18,.55),rgba(2,8,13,.73)),
+ url("/static/sidebar_art.svg") center 105px/cover no-repeat;
+ box-shadow:inset -18px 0 38px rgba(0,0,0,.12)}
+.brand{background:rgba(2,8,13,.32)}
+.eve-topbar{background:
+ linear-gradient(90deg,rgba(4,14,23,.48),rgba(4,15,25,.32),rgba(3,11,18,.42)),
+ url("/static/topbar_art.svg") center/cover no-repeat}
+.sci-panel{background:linear-gradient(180deg,rgba(5,18,29,.76),rgba(4,14,23,.82))}
+.metric-card,.card{background:linear-gradient(180deg,rgba(6,20,32,.74),rgba(4,15,25,.82))}
+.session-strip,.running-site-card,.wave-progress-card,.helper-card,.trigger-card,.recent-card{background:rgba(5,17,27,.78)}
+.tracker-panel{background:linear-gradient(180deg,rgba(4,16,27,.74),rgba(4,14,23,.80))}
+#trackerContent select,#trackerContent input{background:rgba(5,18,30,.75)}
+.panel{box-shadow:inset 0 0 34px rgba(29,109,147,.025),0 5px 28px rgba(0,0,0,.10)}
+.main-stage{background:linear-gradient(90deg,rgba(1,8,13,.08),rgba(1,8,13,.02))}
+@media(min-width:1200px){
+ .sidebar{background-size:230px auto;background-position:center 118px}
+ .main-stage{padding-left:24px;padding-right:24px}
+}
