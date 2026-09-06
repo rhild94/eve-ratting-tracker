@@ -80,6 +80,29 @@ def test_history_edit_persists_escalation_value(page):
     expect(page.locator("#hEscValue")).to_have_value("987,654,321")
 
 
+def test_history_changing_sold_escalation_to_pending_clears_value(page):
+    start_site(page, "Angel Hub")
+    complete_site(page)
+    page.check("#gotEsc")
+    page.select_option("#escName", index=1)
+    page.select_option("#escStatus", label="Sold")
+    page.fill("#escValue", "30000000")
+    page.click("#saveNext")
+    data = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
+    run_id = data["recent"][0]["id"]
+
+    page.goto(page.url.rstrip("/") + "/history")
+    page.locator(f"#runRow{run_id} button:has-text('Edit')").click()
+    page.select_option("#hStatus", label="Pending")
+    expect(page.locator("#hEscValue")).to_have_count(0)
+    page.click("#histSaveBtn")
+    page.wait_for_load_state("networkidle")
+
+    run = page.evaluate(f"() => fetch('/api/run/{run_id}').then(r => r.json())")
+    assert run["run"]["escalation_status"] == "Pending"
+    assert run["run"]["escalation_sale_value"] == 0
+
+
 def test_complete_and_save_returns_immediately_to_next_site(page):
     start_site(page)
     complete_site(page)
@@ -263,4 +286,15 @@ def test_dashboard_uses_session_performance_graph(page):
     expect(page.locator("h1")).to_contain_text("Performance Dashboard")
     expect(page.locator("#sessionChart")).to_be_visible()
     expect(page.locator(".metric-card")).to_have_count(4)
-    expect(page.locator("body")).to_contain_text("Avg ISK/h")
+    expect(page.locator("body")).to_contain_text("Ratting ISK/h")
+    expect(page.locator("body")).to_contain_text("Bounty + ESS only")
+    expect(page.locator("body")).to_contain_text("Total ISK/h")
+
+
+def test_beta_fits_tab_and_tracker_selector_are_visible(page):
+    expect(page.locator(".side-nav")).to_contain_text("Fits")
+    expect(page.locator(".fit-selection-panel")).to_be_visible()
+    expect(page.locator(".beta-fit-select")).to_have_count(1)
+    page.goto(page.url.rstrip("/") + "/?view=fits")
+    expect(page.locator("body")).to_contain_text("Saved Fits")
+    expect(page.locator("#betaAddFit, #betaEmptyAdd").first).to_be_visible()
