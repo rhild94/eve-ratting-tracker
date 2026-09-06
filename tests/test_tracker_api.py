@@ -299,7 +299,7 @@ def test_dashboard_page_loads(test_app):
         r=c.get("/dashboard")
         assert r.status_code == 200
         assert "Performance Dashboard" in r.text
-        assert "Ratting ISK per Hour" in r.text
+        assert "Average ISK per Hour" in r.text
 
 
 def test_today_wallet_cards_sum_all_connected_characters_without_runs(test_app):
