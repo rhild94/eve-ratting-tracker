@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="9.0.2"
+APP_VERSION="9.0.3"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -48,8 +48,8 @@ def load_hd_background():
     global _HD_BACKGROUND_BYTES
     if _HD_BACKGROUND_BYTES is None:
         encoded="".join(
-            (BASE_DIR/"static"/f"hd_bg_{i:02d}.txt").read_text(encoding="utf-8").strip()
-            for i in range(1,9)
+            (BASE_DIR/"static"/f"hd_bg_compact_{i:02d}.txt").read_text(encoding="utf-8").strip()
+            for i in range(1,7)
         )
         encoded="".join(encoded.split())
         encoded += "=" * (-len(encoded) % 4)
