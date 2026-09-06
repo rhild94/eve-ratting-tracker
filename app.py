@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="8.5.2"
+APP_VERSION="8.5.3"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -51,6 +51,10 @@ def load_hd_background():
             (BASE_DIR/"static"/f"hd_bg_{i:02d}.txt").read_text(encoding="utf-8").strip()
             for i in range(1,9)
         )
+        # GitHub's file API can wrap long text payloads. Strip all whitespace
+        # before decoding and restore any missing terminal Base64 padding.
+        encoded="".join(encoded.split())
+        encoded += "=" * (-len(encoded) % 4)
         _HD_BACKGROUND_BYTES=base64.b64decode(encoded,validate=True)
         if not (_HD_BACKGROUND_BYTES.startswith(b"RIFF") and b"WEBP" in _HD_BACKGROUND_BYTES[:16]):
             raise ValueError("Invalid HD background image payload.")
