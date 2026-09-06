@@ -262,5 +262,5 @@ def test_dashboard_uses_session_performance_graph(page):
     page.goto(page.url.rstrip("/") + "/dashboard")
     expect(page.locator("h1")).to_contain_text("Performance Dashboard")
     expect(page.locator("#sessionChart")).to_be_visible()
-    expect(page.locator(".metric-card")).to_have_count(5)
-    expect(page.locator("body")).to_contain_text("Ratting ISK/hr")
+    expect(page.locator(".metric-card")).to_have_count(4)
+    expect(page.locator("body")).to_contain_text("Avg ISK/h")
