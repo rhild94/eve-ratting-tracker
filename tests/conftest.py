@@ -60,11 +60,17 @@ def test_app(tmp_path_factory):
         "ESI_AUTO_SYNC_SECONDS": "1800",
     })
 
+    # Never leave the app server writing to an undrained PIPE. The regression
+    # suite generates enough request logging that the OS pipe buffer can fill,
+    # which blocks the server process and makes later browser navigations time out.
+    # A real file keeps diagnostics without introducing backpressure.
+    log_path = work / "test-app.log"
+    log_handle = log_path.open("w+", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "app.py"],
         cwd=work,
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_handle,
         stderr=subprocess.STDOUT,
         text=True,
     )
@@ -75,10 +81,13 @@ def test_app(tmp_path_factory):
         except Exception as exc:
             proc.terminate()
             try:
-                output, _ = proc.communicate(timeout=3)
+                proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                output, _ = proc.communicate()
+                proc.wait(timeout=3)
+            log_handle.flush()
+            log_handle.seek(0)
+            output = log_handle.read()
             raise RuntimeError(f"{exc}\n--- app.py output ---\n{output}") from exc
         db = work / "ratting_tracker.db"
         now = "2026-09-05T12:00:00+00:00"
@@ -98,6 +107,8 @@ def test_app(tmp_path_factory):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait(timeout=3)
+        log_handle.close()
 
 
 @pytest.fixture(scope="session")
@@ -126,17 +137,12 @@ def browser():
 @pytest.fixture()
 def page(browser, test_app):
     context = browser.new_context()
-    # The app intentionally uses CCP's EVE Image service for portraits, ships,
-    # modules and charges. Those remote images are visual-only and can make the
-    # browser's full `load` event depend on external network conditions in CI.
-    # Abort only those image requests so UI tests stay deterministic without
-    # hiding application/API regressions.
+    # Remote EVE images are visual-only for regression purposes and should not
+    # make CI navigation depend on external image-service latency.
     context.route("https://images.evetech.net/**", lambda route: route.abort())
     page = context.new_page()
     page.set_default_timeout(5000)
     page.set_default_navigation_timeout(15000)
-    # DOM readiness is what these UI tests require. We deliberately do not wait
-    # for every optional remote image to finish loading.
     page.goto(test_app["base_url"], wait_until="domcontentloaded")
     yield page
     context.close()
