@@ -2,7 +2,9 @@ from playwright.sync_api import expect
 
 
 def test_total_isk_heatmap_uses_dashboard_period_and_browser_timezone(page):
-    page.goto(page.url.rstrip("/") + "/dashboard?days=7")
+    base_url = page.url.rstrip("/")
+
+    page.goto(base_url + "/dashboard?days=7")
     panel = page.locator("#totalIskPanel")
     expect(panel).to_be_visible()
     expect(panel.locator("h2")).to_have_text("Total ISK")
@@ -14,7 +16,7 @@ def test_total_isk_heatmap_uses_dashboard_period_and_browser_timezone(page):
     assert "day boundaries" in subtitle
     assert "UTC" in subtitle
 
-    page.goto(page.url.rstrip("/") + "/dashboard?days=30")
+    page.goto(base_url + "/dashboard?days=30")
     panel = page.locator("#totalIskPanel")
     expect(panel).to_be_visible()
     expect(panel.locator(".total-isk-summary span")).to_have_text("30-day total")
