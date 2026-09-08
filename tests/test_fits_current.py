@@ -7,7 +7,7 @@ def test_current_fits_workflow_and_tracker_selector(page):
     expect(page.locator(".fit-selection-panel")).to_be_visible()
     expect(page.locator(".beta-fit-select")).to_have_count(1)
 
-    # Current Fits workflow: saved fits + import-driven management + ammo selection.
+    # Current Fits workflow: saved fits + import-driven management.
     page.goto(page.url.rstrip("/") + "/?view=fits")
     expect(page.locator("#fitWorkbench")).to_be_visible()
     expect(page.locator("body")).to_contain_text("Saved Fits")
@@ -15,8 +15,6 @@ def test_current_fits_workflow_and_tracker_selector(page):
     expect(page.locator("#fitImport")).to_be_visible()
     expect(page.locator("#fitDuplicate")).to_be_visible()
     expect(page.locator("#fitDelete")).to_be_visible()
-    expect(page.locator("#ammoSelect")).to_be_visible()
-    expect(page.locator("body")).to_contain_text("Imported modules are read-only")
 
     # Open the import flow to catch regressions where the control exists but does nothing.
     page.click("#fitImport")
