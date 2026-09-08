@@ -128,6 +128,10 @@ def page(browser, test_app):
     context = browser.new_context()
     page = context.new_page()
     page.set_default_timeout(5000)
+    # CI runners occasionally need more than 5 seconds for a fresh page load
+    # after dozens of browser tests. Keep interaction assertions strict at 5s,
+    # but give navigation enough headroom so infrastructure load is not a false failure.
+    page.set_default_navigation_timeout(15000)
     page.goto(test_app["base_url"])
     yield page
     context.close()
