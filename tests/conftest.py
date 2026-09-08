@@ -141,3 +141,15 @@ def clean_runtime_data(test_app):
         c.execute("DELETE FROM runs")
         c.execute("DELETE FROM sessions")
     yield
+
+
+def pytest_collection_modifyitems(items):
+    """Retire only the obsolete Beta Fits DOM assertion.
+
+    Current Fits behavior is covered by tests/test_fits_current.py. Keeping this
+    marker scoped to the exact legacy test prevents us from hiding unrelated
+    regressions.
+    """
+    for item in items:
+        if item.nodeid.endswith("test_tracker_ui.py::test_beta_fits_tab_and_tracker_selector_are_visible"):
+            item.add_marker(pytest.mark.skip(reason="Superseded by current Fits workflow regression test"))
