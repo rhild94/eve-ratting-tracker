@@ -126,13 +126,18 @@ def browser():
 @pytest.fixture()
 def page(browser, test_app):
     context = browser.new_context()
+    # The app intentionally uses CCP's EVE Image service for portraits, ships,
+    # modules and charges. Those remote images are visual-only and can make the
+    # browser's full `load` event depend on external network conditions in CI.
+    # Abort only those image requests so UI tests stay deterministic without
+    # hiding application/API regressions.
+    context.route("https://images.evetech.net/**", lambda route: route.abort())
     page = context.new_page()
     page.set_default_timeout(5000)
-    # CI runners occasionally need more than 5 seconds for a fresh page load
-    # after dozens of browser tests. Keep interaction assertions strict at 5s,
-    # but give navigation enough headroom so infrastructure load is not a false failure.
     page.set_default_navigation_timeout(15000)
-    page.goto(test_app["base_url"])
+    # DOM readiness is what these UI tests require. We deliberately do not wait
+    # for every optional remote image to finish loading.
+    page.goto(test_app["base_url"], wait_until="domcontentloaded")
     yield page
     context.close()
 
