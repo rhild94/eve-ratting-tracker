@@ -190,8 +190,8 @@ def init_db():
             ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
         for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT","character_role TEXT DEFAULT 'alt'"]:
             ensure_col(c,"characters",d)
-        # Reconcile stale Beta data: only Sold escalations are realized income.
-        c.execute("UPDATE runs SET escalation_sale_value=0 WHERE COALESCE(escalation_status,'')<>'Sold' AND COALESCE(escalation_sale_value,0)<>0")
+        # Preserve both realized escalation outcomes; pending and expired values are not income.
+        c.execute("UPDATE runs SET escalation_sale_value=0 WHERE COALESCE(escalation_status,'') NOT IN ('Sold','Ran Myself') AND COALESCE(escalation_sale_value,0)<>0")
 init_db()
 
 @app.middleware("http")
@@ -229,7 +229,7 @@ def charid(t):
 
 def esi_cache_expiry(headers):
     cc=headers.get("cache-control","")
-    m=re.search(r"(?:^|,)\\s*max-age=(\\d+)",cc,re.I)
+    m=re.search(r"(?:^|,)\s*max-age=(\d+)",cc,re.I)
     if m:return utcnow()+timedelta(seconds=max(0,int(m.group(1))))
     ex=headers.get("expires")
     if ex:
@@ -477,11 +477,16 @@ def enrich(r):
     try:d["fit_selection"]=json.loads(d.get("fit_selection_json") or "{}")
     except:d["fit_selection"]={}
     d["is_paused"]=bool(d.get("paused_at"))
+    d["escalation_sales"]=money(d.get("escalation_sale_value")) if d.get("escalation_status")=="Sold" else 0
+    d["escalation_loot"]=money(d.get("escalation_sale_value")) if d.get("escalation_status")=="Ran Myself" else 0
+    d["bonus"]=d["escalation_sales"]+d["escalation_loot"]+money(d.get("rare_spawn_value"))
+    d["total_isk"]=money(d.get("combined_bounty"))+d["bonus"]
     return d
 
 def session_performance(days=30):
     days=30 if days==30 else 7 if days==7 else 30
-    cutoff=utcnow()-timedelta(days=days)
+    now=utcnow()
+    cutoff=now-timedelta(days=days)
     with db() as c:
         sessions=c.execute("SELECT * FROM sessions WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
         runs=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
@@ -493,11 +498,13 @@ def session_performance(days=30):
     for ses in sessions:
         try:end=parse_iso(ses["ended_at"])
         except:continue
-        if end<cutoff:continue
+        if end<cutoff or end>now:continue
         rr=[r for r in runs if r["session_id"]==ses["id"]]
         if not rr:continue
         bounty=sum(money(r["combined_bounty"]) for r in rr)
-        bonus=sum((money(r["escalation_sale_value"]) if r["escalation_status"]=="Sold" else 0)+money(r["rare_spawn_value"]) for r in rr)
+        bonus=sum((money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold", "Ran Myself") else 0)+money(r["rare_spawn_value"]) for r in rr)
+        escalation_sales=sum(enrich(r)["escalation_sales"] for r in rr)
+        escalation_loot=sum(enrich(r)["escalation_loot"] for r in rr)
         ess_total=sum(money(e["amount"]) for e in ess if e["session_id"]==ses["id"])
         loot=money(ses["loot_value"]);salvage=money(ses["salvage_value"])
         ratting=bounty+ess_total
@@ -513,6 +520,7 @@ def session_performance(days=30):
                 pass
         row={"id":ses["id"],"date":end.strftime("%b %d"),"ended_at":ses["ended_at"],"duration_seconds":seconds,
              "sites":len(rr),"participants":len(participants),"bounty":bounty,"ess":ess_total,"loot":loot,"salvage":salvage,"bonus":bonus,
+             "escalation_sales":escalation_sales,"escalation_loot":escalation_loot,
              "ratting_isk":ratting,"total_isk":total,"ratting_isk_hr":ratting_hr,"total_isk_hr":total_hr}
         rows.append(row)
         total_income+=total;total_ratting+=ratting;total_seconds+=seconds;total_sites+=len(rr)
@@ -556,7 +564,9 @@ async def dashboard_payload():
     # They use reconciled run bounty so unrelated wallet activity cannot
     # inflate the measured ratting efficiency.
     tracked_today_bounty=0.0
-    for r in recent:
+    with db() as c:
+        completed=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL").fetchall()
+    for r in completed:
         if r["ended_at"] and parse_iso(r["ended_at"]).date()==today:
             e=enrich(r)
             tracked_today_bounty+=money(r["combined_bounty"])
@@ -804,7 +814,7 @@ async def api_save_bonus(rid:int,request:Request):
         values=(
             b.get("escalation_name") or None,
             escalation_status,
-            max(0,money(b.get("escalation_sale_value"))) if escalation_status=="Sold" else 0,
+            max(0,money(b.get("escalation_sale_value"))) if escalation_status in ("Sold", "Ran Myself") else 0,
             b.get("rare_spawn_type") or None,
             b.get("rare_spawn_name") or None,
             max(0,money(b.get("rare_spawn_value"))),
@@ -854,11 +864,13 @@ async def api_end_session(request:Request):
     with db() as c:
         s=active_session(c)
         if not s:return JSONResponse({"ok":False,"error":"No active session."},404)
+        if c.execute("SELECT 1 FROM runs WHERE session_id=? AND status='active'",(s["id"],)).fetchone():
+            return JSONResponse({"ok":False,"error":"Complete the active site before ending this session."},409)
         last=c.execute("SELECT ended_at FROM runs WHERE session_id=? AND status='complete' ORDER BY ended_at DESC LIMIT 1",(s["id"],)).fetchone()
         end=last["ended_at"] if last else iso()
         c.execute("UPDATE sessions SET ended_at=?,status='complete',loot_value=?,salvage_value=?,notes=? WHERE id=?",(end,max(0,money(b.get("loot_value"))),max(0,money(b.get("salvage_value"))),(b.get("notes") or "").strip(),s["id"]))
         for e in c.execute("SELECT * FROM ess_events WHERE session_id IS NULL"):
-            try:auto_match_ess(c,e["entry_id"],parse_iso(e["date"]))
+            try:auto_match_ess(c,e["character_id"],e["entry_id"],parse_iso(e["date"]))
             except:pass
     return JSONResponse({"ok":True})
 
@@ -918,10 +930,10 @@ async def history(request:Request,days:int=7):
         if not r["ended_at"]:continue
         k=parse_iso(r["ended_at"]).date().isoformat()
         if k in buckets:
-            buckets[k]["bounty"]+=money(r["combined_bounty"]);buckets[k]["bonus"]+=(money(r["escalation_sale_value"]) if r["escalation_status"]=="Sold" else 0)+money(r["rare_spawn_value"]);buckets[k]["seconds"]+=effective_run_seconds(r);buckets[k]["sites"]+=1
+            buckets[k]["bounty"]+=money(r["combined_bounty"]);buckets[k]["bonus"]+=(money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold", "Ran Myself") else 0)+money(r["rare_spawn_value"]);buckets[k]["seconds"]+=effective_run_seconds(r);buckets[k]["sites"]+=1
     sess=[]
     for s in ss:
-        rr=[r for r in rs if r["session_id"]==s["id"]];d=dict(s);d["site_count"]=len(rr);d["bounty"]=sum(money(r["combined_bounty"]) for r in rr);d["bonus"]=sum((money(r["escalation_sale_value"]) if r["escalation_status"]=="Sold" else 0)+money(r["rare_spawn_value"]) for r in rr);d["total"]=d["bounty"]+money(s["loot_value"])+money(s["salvage_value"])+d["bonus"];d["systems"]=", ".join(sorted(set(r["system_name"] or "Unknown" for r in rr))) if rr else "—";span=max(0,int((parse_iso(s["ended_at"])-parse_iso(s["started_at"])).total_seconds()));d["duration_label"]=f"{span//3600}h {(span%3600)//60}m" if span>=3600 else f"{span//60}m";sess.append(d)
+        rr=[r for r in rs if r["session_id"]==s["id"]];d=dict(s);d["site_count"]=len(rr);d["bounty"]=sum(money(r["combined_bounty"]) for r in rr);d["bonus"]=sum((money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold", "Ran Myself") else 0)+money(r["rare_spawn_value"]) for r in rr);d["total"]=d["bounty"]+money(s["loot_value"])+money(s["salvage_value"])+d["bonus"];d["systems"]=", ".join(sorted(set(r["system_name"] or "Unknown" for r in rr))) if rr else "—";span=max(0,int((parse_iso(s["ended_at"])-parse_iso(s["started_at"])).total_seconds()));d["duration_label"]=f"{span//3600}h {(span%3600)//60}m" if span>=3600 else f"{span//60}m";sess.append(d)
         k=parse_iso(s["ended_at"]).date().isoformat()
         if k in buckets:buckets[k]["loot"]+=money(s["loot_value"]);buckets[k]["salvage"]+=money(s["salvage_value"])
     for e in ess:

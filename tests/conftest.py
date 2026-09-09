@@ -51,6 +51,9 @@ def test_app(tmp_path_factory):
     env = os.environ.copy()
     env.update({
         "TRACKER_HOST": "127.0.0.1",
+        "TRACKER_DB_PATH": str(work / "ratting_tracker.db"),
+        "DATABASE_URL": "",
+        "APP_ACCESS_KEY": "",
         "TRACKER_PORT": str(port),
         "EVE_CLIENT_ID": "test-client-id",
         "EVE_CLIENT_SECRET": "",

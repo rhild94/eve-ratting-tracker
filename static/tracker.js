@@ -256,7 +256,7 @@ function showQuickResult(run,escalations,bountyPending){
  <div class="quick-options">
   <label class="toggle-row"><input id="gotEsc" type="checkbox"><span>Escalation received</span></label>
   <div id="escFields" class="conditional hidden"><select id="escName"><option value="">Select escalation</option>${esc}</select><select id="escStatus"><option>Pending</option><option>Sold</option><option>Ran Myself</option><option>Expired</option></select></div>
-  <label id="escValueRow" class="conditional-value hidden">Escalation sale value<input id="escValue" class="isk-input" inputmode="numeric" value=""></label>
+  <label id="escValueRow" class="conditional-value hidden"><span id="escValueLabel">Escalation sale value</span><input id="escValue" class="isk-input" inputmode="numeric" value=""></label>
   <label class="toggle-row"><input id="gotRare" type="checkbox"><span>Rare spawn</span></label>
   <div id="rareFields" class="conditional hidden"><select id="rareType"><option>Commander</option><option>Dreadnought</option><option>Titan</option><option>Other</option></select>
     <label class="mini-toggle"><input id="gotRareLoot" type="checkbox"><span>Loot / value dropped</span></label></div>
@@ -266,10 +266,11 @@ function showQuickResult(run,escalations,bountyPending){
  <div class="modal-actions"><button id="saveNext" class="good big">Save & Next Site</button></div>`;
  bindIskMask($("#escValue")); bindIskMask($("#rareValue"));
  const updateFields=()=>{
-  const gotEsc=$("#gotEsc").checked, sold=gotEsc && $("#escStatus").value==="Sold";
+  const gotEsc=$("#gotEsc").checked, sold=gotEsc && ["Sold","Ran Myself"].includes($("#escStatus").value);
   const gotRare=$("#gotRare").checked, gotLoot=gotRare && $("#gotRareLoot").checked;
   $("#escFields").classList.toggle("hidden",!gotEsc);
   $("#escValueRow").classList.toggle("hidden",!sold);
+  $("#escValueLabel").textContent=$("#escStatus").value==="Ran Myself"?"Drop / Loot Value (ISK)":"Escalation sale value";
   $("#rareFields").classList.toggle("hidden",!gotRare);
   $("#rareValueRow").classList.toggle("hidden",!gotLoot);
  };
@@ -284,7 +285,7 @@ async function finishResult(save,id){
  const payload={
   escalation_name:$("#gotEsc").checked?$("#escName").value:"",
   escalation_status:$("#gotEsc").checked?$("#escStatus").value:"",
-  escalation_sale_value:$("#gotEsc").checked && $("#escStatus").value==="Sold"?rawIsk($("#escValue").value):0,
+  escalation_sale_value:$("#gotEsc").checked && ["Sold","Ran Myself"].includes($("#escStatus").value)?rawIsk($("#escValue").value):0,
   rare_spawn_type:$("#gotRare").checked?$("#rareType").value:"",
   rare_spawn_value:$("#gotRare").checked && $("#gotRareLoot").checked?rawIsk($("#rareValue").value):0,
   notes:$("#bonusNote").value||""
