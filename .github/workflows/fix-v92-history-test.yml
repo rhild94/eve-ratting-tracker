@@ -1,0 +1,39 @@
+name: Fix v9.2 history pagination regression wait
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-v92-history-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Make pagination assertions wait for React render
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/test_release_v4.py')
+          s=p.read_text(encoding='utf-8')
+          a='assert page.locator(".history-main tbody tr").count() == 30'
+          b='assert page.locator(".history-main tbody tr").count() == 5'
+          if a not in s or b not in s:
+              raise SystemExit('Expected pagination assertions not found')
+          s=s.replace(a, 'expect(page.locator(".history-main tbody tr")).to_have_count(30)', 1)
+          s=s.replace(b, 'expect(page.locator(".history-main tbody tr")).to_have_count(5)', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit test stabilization
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_release_v4.py
+          git commit -m "Stabilize history pagination render assertion"
+          git push origin main
