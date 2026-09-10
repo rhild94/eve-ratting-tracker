@@ -86,10 +86,10 @@ def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, te
     expect(page.locator('[data-pagination="sessions"]')).to_contain_text("Page 1 of 2")
     expect(page.locator(".history-metrics .metric-card").first.locator("b")).to_have_text("35")
     expect(page.locator(".escalation-list")).to_contain_text("123M ISK")
-    assert page.locator(".history-main tbody tr").count() == 30
+    expect(page.locator(".history-main tbody tr")).to_have_count(30)
     page.locator('[data-pagination="runs"] a').filter(has_text="Next").click()
     expect(page).to_have_url(re.compile(r"run_page=2"))
-    assert page.locator(".history-main tbody tr").count() == 5
+    expect(page.locator(".history-main tbody tr")).to_have_count(5)
 
 
 def test_progression_luck_statistics_render_from_all_recent_sites(page, test_app):
