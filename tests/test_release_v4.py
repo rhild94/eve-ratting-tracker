@@ -158,42 +158,47 @@ def test_both_characters_ess_are_aggregated_without_key_collision(test_app):
     cid2 = upsert_alt(test_app)
     db = test_app["work"] / "ratting_tracker.db"
     now = datetime.now(timezone.utc)
-    with sqlite3.connect(db) as c:
-        c.execute("DELETE FROM wallet_entries")
-        c.execute(
-            "INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",
-            (777, 90000001, now.isoformat(), 10_000_000, 0, "ess_escrow_transfer", "", "{}"),
-        )
-        c.execute(
-            "INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",
-            (777, cid2, now.isoformat(), 20_000_000, 0, "ess_escrow_transfer", "", "{}"),
-        )
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as client:
-        dash = client.get("/api/dashboard").json()
-        assert dash["stats"]["today_ess"] == 30_000_000
-
-        started = client.post("/api/run/start", json={
-            "anomaly": "Angel Hub", "variant": "Default",
-            "participants": [90000001, cid2], "notes": "ess aggregation"
-        }).json()
-        sid = started["session_id"]
-        rid = started["run"]["id"]
-        assert client.post(f"/api/run/{rid}/complete").status_code == 200
-        assert client.post("/api/session/end", json={"loot_value": 0, "salvage_value": 0, "notes": ""}).status_code == 200
-
+    try:
         with sqlite3.connect(db) as c:
+            c.execute("DELETE FROM wallet_entries")
             c.execute(
-                "INSERT INTO ess_events(entry_id,character_id,date,amount,session_id,match_status) VALUES(?,?,?,?,?,'manual')",
-                (888, 90000001, now.isoformat(), 3_000_000, sid),
+                "INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",
+                (777, 90000001, now.isoformat(), 10_000_000, 0, "ess_escrow_transfer", "", "{}"),
             )
             c.execute(
-                "INSERT INTO ess_events(entry_id,character_id,date,amount,session_id,match_status) VALUES(?,?,?,?,?,'manual')",
-                (888, cid2, now.isoformat(), 4_000_000, sid),
+                "INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",
+                (777, cid2, now.isoformat(), 20_000_000, 0, "ess_escrow_transfer", "", "{}"),
             )
-        html = client.get("/dashboard?days=7").text
-        m = re.search(r"window\.__BOOTSTRAP__=(.*?);</script>", html, re.S)
-        assert m, "dashboard bootstrap missing"
-        perf = json.loads(m.group(1))["perf"]
-        row = next(x for x in perf["rows"] if x["id"] == sid)
-        assert row["ess"] == 7_000_000
-        assert row["ratting_isk"] >= 7_000_000
+        with httpx.Client(base_url=test_app["base_url"], timeout=5) as client:
+            dash = client.get("/api/dashboard").json()
+            assert dash["stats"]["today_ess"] == 30_000_000
+
+            started = client.post("/api/run/start", json={
+                "anomaly": "Angel Hub", "variant": "Default",
+                "participants": [90000001, cid2], "notes": "ess aggregation"
+            }).json()
+            sid = started["session_id"]
+            rid = started["run"]["id"]
+            assert client.post(f"/api/run/{rid}/complete").status_code == 200
+            assert client.post("/api/session/end", json={"loot_value": 0, "salvage_value": 0, "notes": ""}).status_code == 200
+
+            with sqlite3.connect(db) as c:
+                c.execute(
+                    "INSERT INTO ess_events(entry_id,character_id,date,amount,session_id,match_status) VALUES(?,?,?,?,?,'manual')",
+                    (888, 90000001, now.isoformat(), 3_000_000, sid),
+                )
+                c.execute(
+                    "INSERT INTO ess_events(entry_id,character_id,date,amount,session_id,match_status) VALUES(?,?,?,?,?,'manual')",
+                    (888, cid2, now.isoformat(), 4_000_000, sid),
+                )
+            html = client.get("/dashboard?days=7").text
+            m = re.search(r"window\.__BOOTSTRAP__=(.*?);</script>", html, re.S)
+            assert m, "dashboard bootstrap missing"
+            perf = json.loads(m.group(1))["perf"]
+            row = next(x for x in perf["rows"] if x["id"] == sid)
+            assert row["ess"] == 7_000_000
+            assert row["ratting_isk"] >= 7_000_000
+    finally:
+        with sqlite3.connect(db) as c:
+            c.execute("UPDATE characters SET connected=0,character_role='alt' WHERE character_id=?", (cid2,))
+            c.execute("DELETE FROM wallet_entries WHERE character_id=?", (cid2,))
