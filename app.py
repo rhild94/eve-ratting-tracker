@@ -509,7 +509,7 @@ def session_performance(days=30):
         loot=money(ses["loot_value"]);salvage=money(ses["salvage_value"])
         ratting=bounty+ess_total
         total=ratting+loot+salvage+bonus
-        seconds=max(1,(parse_iso(ses["ended_at"])-parse_iso(ses["started_at"])).total_seconds())
+        seconds=max(1,sum(effective_run_seconds(r) for r in rr))
         ratting_hr=ratting/seconds*3600
         total_hr=total/seconds*3600
         participants=set()
