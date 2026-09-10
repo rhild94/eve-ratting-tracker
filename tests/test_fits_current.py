@@ -53,3 +53,13 @@ def test_current_fits_workflow_and_tracker_selector(page):
     expect(page.locator("#fitImportModal")).to_be_visible()
     expect(page.locator("#fitImportText")).to_be_visible()
     expect(page.locator("#fitImportSave")).to_be_visible()
+    page.click("#fitImportClose")
+
+    # The last remaining fit must be deletable and return to the clean empty state.
+    page.once("dialog", lambda d: d.accept())
+    page.click("#fitDelete")
+    expect(page.locator(".fit-empty-state")).to_be_visible()
+    expect(page.locator(".fit-empty-state")).to_contain_text("No saved fits yet")
+    expect(page.locator("#fitSelect")).to_have_count(0)
+    expect(page.locator("#fitDuplicate")).to_have_count(0)
+    expect(page.locator("#fitDelete")).to_have_count(0)
