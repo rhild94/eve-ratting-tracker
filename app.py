@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="9.1.1"
+APP_VERSION="9.2.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -188,7 +188,7 @@ def init_db():
         ensure_col(c,"oauth_states","code_verifier TEXT")
         for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT","fit_selection_json TEXT"]:
             ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
-        for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT","character_role TEXT DEFAULT 'alt'"]:
+        for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT","character_role TEXT DEFAULT 'alt'","connected INTEGER DEFAULT 1"]:
             ensure_col(c,"characters",d)
         # Preserve both realized escalation outcomes; pending and expired values are not income.
         c.execute("UPDATE runs SET escalation_sale_value=0 WHERE COALESCE(escalation_status,'') NOT IN ('Sold','Ran Myself') AND COALESCE(escalation_sale_value,0)<>0")
@@ -509,7 +509,7 @@ def session_performance(days=30):
         loot=money(ses["loot_value"]);salvage=money(ses["salvage_value"])
         ratting=bounty+ess_total
         total=ratting+loot+salvage+bonus
-        seconds=max(1,(parse_iso(ses["ended_at"])-parse_iso(ses["started_at"])).total_seconds())
+        seconds=max(1,sum(effective_run_seconds(r) for r in rr))
         ratting_hr=ratting/seconds*3600
         total_hr=total/seconds*3600
         participants=set()
@@ -533,7 +533,7 @@ def session_performance(days=30):
 
 async def dashboard_payload():
     with db() as c:
-        chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
+        chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE COALESCE(connected,1)=1 ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
         ar=c.execute("SELECT * FROM runs WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
         recent=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 12").fetchall()
         ses=active_session(c); sr=c.execute("SELECT * FROM runs WHERE session_id=? ORDER BY id",(ses["id"],)).fetchall() if ses else []
@@ -579,7 +579,7 @@ async def dashboard_payload():
         si={"id":ses["id"],"sites":len(done),"bounty":sum(money(r["combined_bounty"]) for r in done)}
     with db() as c:
         pending_esi=c.execute("SELECT COUNT(*) AS n FROM runs WHERE status='complete' AND esi_synced_at IS NULL").fetchone()["n"]
-        last_sync=c.execute("SELECT MAX(last_esi_sync) AS t FROM characters").fetchone()["t"]
+        last_sync=c.execute("SELECT MAX(last_esi_sync) AS t FROM characters WHERE COALESCE(connected,1)=1").fetchone()["t"]
         sync_state=c.execute("SELECT * FROM esi_sync_state WHERE id=1").fetchone()
     esi_state={"pending_runs":pending_esi,"last_sync":last_sync,"interval_minutes":AUTO_SYNC_INTERVAL_SECONDS//60,"configured":bool(CLIENT_ID),"connected_characters":len(characters)}
     if sync_state:esi_state.update({k:sync_state[k] for k in ["last_attempt","last_success","last_error","next_check"]})
@@ -621,11 +621,29 @@ async def setup_save(client_id:str=Form("")):
 @app.post("/api/character/{cid}/main")
 async def api_set_main_character(cid:int):
     with db() as c:
-        if not c.execute("SELECT 1 FROM characters WHERE character_id=?",(cid,)).fetchone():
-            return JSONResponse({"ok":False,"error":"Character not found."},404)
-        c.execute("UPDATE characters SET character_role='alt'")
+        if not c.execute("SELECT 1 FROM characters WHERE character_id=? AND COALESCE(connected,1)=1",(cid,)).fetchone():
+            return JSONResponse({"ok":False,"error":"Connected character not found."},404)
+        c.execute("UPDATE characters SET character_role='alt' WHERE COALESCE(connected,1)=1")
         c.execute("UPDATE characters SET character_role='main' WHERE character_id=?",(cid,))
     return JSONResponse({"ok":True})
+
+@app.delete("/api/character/{cid}")
+async def api_remove_character(cid:int):
+    """Disconnect a character while preserving every historical record."""
+    with db() as c:
+        row=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE character_id=? AND COALESCE(connected,1)=1",(cid,)).fetchone()
+        if not row:
+            return JSONResponse({"ok":False,"error":"Connected character not found."},404)
+        for active in c.execute("SELECT id,participants_json FROM runs WHERE status='active'").fetchall():
+            try:pids=[int(x) for x in json.loads(active["participants_json"] or "[]")]
+            except Exception:pids=[]
+            if cid in pids:
+                return JSONResponse({"ok":False,"error":"Complete or cancel the active site before removing this character."},409)
+        others=c.execute("SELECT character_id,name FROM characters WHERE character_id<>? AND COALESCE(connected,1)=1 ORDER BY connected_at",(cid,)).fetchall()
+        if row["character_role"]=="main" and others:
+            return JSONResponse({"ok":False,"error":"Set another connected character as Main before removing the current Main character.","requires_new_main":True,"alternatives":[dict(x) for x in others]},409)
+        c.execute("UPDATE characters SET connected=0,character_role='alt',access_token='',refresh_token='',expires_at=0 WHERE character_id=?",(cid,))
+    return JSONResponse({"ok":True,"character_id":cid})
 
 @app.get("/api/dashboard")
 async def api_dashboard(): return JSONResponse(await dashboard_payload())
@@ -703,9 +721,9 @@ async def callback(code:str,state:str):
         r=await cl.post(SSO_TOKEN,auth=auth,data=data);r.raise_for_status();t=r.json()
     cid=charid(t["access_token"]);pub=await esi_get(f"/characters/{cid}/")
     with db() as c:
-        has_main=c.execute("SELECT 1 FROM characters WHERE character_role='main' LIMIT 1").fetchone()
+        has_main=c.execute("SELECT 1 FROM characters WHERE character_role='main' AND COALESCE(connected,1)=1 LIMIT 1").fetchone()
         role="alt" if has_main else "main"
-        c.execute("""INSERT INTO characters(character_id,name,access_token,refresh_token,expires_at,connected_at,character_role) VALUES(?,?,?,?,?,?,?) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso(),role))
+        c.execute("""INSERT INTO characters(character_id,name,access_token,refresh_token,expires_at,connected_at,character_role,connected) VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,connected_at=excluded.connected_at,character_role=excluded.character_role,connected=1""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso(),role))
     await sync_character(cid)
     return RedirectResponse("/",302)
 
@@ -714,7 +732,7 @@ async def run_esi_sync(source="manual"):
     next_check=iso(utcnow()+timedelta(seconds=AUTO_SYNC_INTERVAL_SECONDS))
     with db() as c:
         c.execute("UPDATE esi_sync_state SET last_attempt=?,next_check=? WHERE id=1",(attempt,next_check))
-        ids=[x["character_id"] for x in c.execute("SELECT character_id FROM characters")]
+        ids=[x["character_id"] for x in c.execute("SELECT character_id FROM characters WHERE COALESCE(connected,1)=1")]
     errors=[]
     for cid in ids:
         try:await sync_character(cid)
@@ -904,45 +922,94 @@ async def api_delete_session(sid:int):
             if attempt==2:return JSONResponse({"ok":False,"error":"Database is busy with an ESI update. Try again in a moment."},503)
             await asyncio.sleep(.15)
 
+def progression_site_performance(days=30):
+    days=30 if days==30 else 7 if days==7 else 30
+    now=utcnow();cutoff=now-timedelta(days=days)
+    with db() as c:
+        rows=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC").fetchall()
+    groups={}
+    for r in rows:
+        try:end=parse_iso(r["ended_at"])
+        except Exception:continue
+        if not (cutoff<=end<=now):continue
+        e=enrich(r);name=(r["anomaly"] or "Other").strip() or "Other"
+        g=groups.setdefault(name,{"name":name,"runs":0,"income":0.0,"seconds":0.0,"isk_hr_sum":0.0,"best_run":0.0})
+        realized=money(e.get("total_isk"));seconds=effective_run_seconds(r)
+        g["runs"]+=1;g["income"]+=realized;g["seconds"]+=seconds;g["isk_hr_sum"]+=money(e.get("isk_hr"));g["best_run"]=max(g["best_run"],realized)
+    out=[]
+    for g in groups.values():
+        n=max(1,g["runs"]);out.append({**g,"avg_isk":g["income"]/n,"avg_duration":g["seconds"]/n,"avg_isk_hr":g["isk_hr_sum"]/n})
+    return sorted(out,key=lambda x:(-x["avg_isk_hr"],x["name"]))
+
+def progression_luck_stats(days=30):
+    days=30 if days==30 else 7 if days==7 else 30
+    now=utcnow();cutoff=now-timedelta(days=days)
+    with db() as c:
+        rows=c.execute("SELECT anomaly,ended_at,escalation_name,rare_spawn_type,rare_spawn_value FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC").fetchall()
+    active=[]
+    for r in rows:
+        try:end=parse_iso(r["ended_at"])
+        except Exception:continue
+        if cutoff<=end<=now:active.append(r)
+    sites=len(active);escalations=[r for r in active if (r["escalation_name"] or "").strip()]
+    esc_counts={}
+    for r in escalations:
+        n=(r["escalation_name"] or "Unknown").strip();esc_counts[n]=esc_counts.get(n,0)+1
+    most_common=max(esc_counts.items(),key=lambda x:(x[1],x[0]))[0] if esc_counts else None
+    rare=[r for r in active if (r["rare_spawn_type"] or "").strip()];breakdown={"Commander":0,"Dreadnought":0,"Titan":0,"Other":0}
+    for r in rare:
+        kind=(r["rare_spawn_type"] or "Other").strip();breakdown[kind if kind in breakdown else "Other"]+=1
+    return {"days":days,"sites":sites,"escalations":{"total":len(escalations),"rate":(len(escalations)/sites*100 if sites else 0),"most_common":most_common},"rare_spawns":{"total":len(rare),"rate":(len(rare)/sites*100 if sites else 0),"breakdown":breakdown,"loot_value":sum(money(r["rare_spawn_value"]) for r in rare)}}
+
 @app.get("/progression",response_class=HTMLResponse)
-async def progression_page(request:Request):
-    with db() as c:chars=c.execute("SELECT character_id,name FROM characters ORDER BY connected_at").fetchall()
+async def progression_page(request:Request,days:int=30):
+    days=30 if days==30 else 7 if days==7 else 30
+    with db() as c:chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE COALESCE(connected,1)=1 ORDER BY connected_at").fetchall()
     out=[]
     for x in chars:
         try:
             p=await progression(x["character_id"],50)
         except Exception:
             p={"total_sp":0,"queue":[],"changes":[],"captured_at":None,"has_snapshot":False}
-        out.append({"id":x["character_id"],"name":x["name"],"portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
-    boot={"page":"progression","characters":out,"version":APP_VERSION}
+        out.append({"id":x["character_id"],"name":x["name"],"role":x["character_role"] or "alt","portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
+    boot={"page":"progression","characters":out,"luck_stats":progression_luck_stats(days),"site_performance":progression_site_performance(days),"version":APP_VERSION}
     return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Progression"})
 
 @app.get("/history",response_class=HTMLResponse)
-async def history(request:Request,days:int=7):
-    days=30 if days==30 else 7; start=utcnow().date()-timedelta(days=days-1)
+async def history(request:Request,days:int=7,run_page:int=1,session_page:int=1,analytics:int=0):
+    days=30 if days==30 else 7; start_day=utcnow().date()-timedelta(days=days-1)
+    run_page=max(1,int(run_page or 1));session_page=max(1,int(session_page or 1));runs_per_page=30;sessions_per_page=20
     with db() as c:
         rs=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY ended_at DESC").fetchall()
         ss=c.execute("SELECT * FROM sessions WHERE status='complete' ORDER BY ended_at DESC").fetchall()
         ess=c.execute("""SELECT e.*,COALESCE(ch.name,CAST(e.character_id AS TEXT)) AS character_name FROM ess_events e LEFT JOIN characters ch ON ch.character_id=e.character_id ORDER BY e.date DESC""").fetchall()
-        alls=c.execute("SELECT id FROM sessions WHERE status='complete' ORDER BY id DESC LIMIT 100").fetchall()
-    buckets={(start+timedelta(days=i)).isoformat():{"date":(start+timedelta(days=i)).isoformat(),"bounty":0,"ess":0,"loot":0,"salvage":0,"bonus":0,"seconds":0,"sites":0,"isk_hr":0} for i in range(days)}
+        alls=c.execute("SELECT id FROM sessions WHERE status='complete' ORDER BY id DESC LIMIT 500").fetchall()
+    buckets={(start_day+timedelta(days=i)).isoformat():{"date":(start_day+timedelta(days=i)).isoformat(),"bounty":0,"ess":0,"loot":0,"salvage":0,"bonus":0,"seconds":0,"sites":0,"isk_hr":0} for i in range(days)}
     for r in rs:
         if not r["ended_at"]:continue
         k=parse_iso(r["ended_at"]).date().isoformat()
         if k in buckets:
             buckets[k]["bounty"]+=money(r["combined_bounty"]);buckets[k]["bonus"]+=(money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold", "Ran Myself") else 0)+money(r["rare_spawn_value"]);buckets[k]["seconds"]+=effective_run_seconds(r);buckets[k]["sites"]+=1
     sess=[]
-    for s in ss:
-        rr=[r for r in rs if r["session_id"]==s["id"]];d=dict(s);d["site_count"]=len(rr);d["bounty"]=sum(money(r["combined_bounty"]) for r in rr);d["bonus"]=sum((money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold", "Ran Myself") else 0)+money(r["rare_spawn_value"]) for r in rr);d["total"]=d["bounty"]+money(s["loot_value"])+money(s["salvage_value"])+d["bonus"];d["systems"]=", ".join(sorted(set(r["system_name"] or "Unknown" for r in rr))) if rr else "—";span=max(0,int((parse_iso(s["ended_at"])-parse_iso(s["started_at"])).total_seconds()));d["duration_label"]=f"{span//3600}h {(span%3600)//60}m" if span>=3600 else f"{span//60}m";sess.append(d)
-        k=parse_iso(s["ended_at"]).date().isoformat()
-        if k in buckets:buckets[k]["loot"]+=money(s["loot_value"]);buckets[k]["salvage"]+=money(s["salvage_value"])
+    for srow in ss:
+        rr=[r for r in rs if r["session_id"]==srow["id"]];d=dict(srow);d["site_count"]=len(rr);d["bounty"]=sum(money(r["combined_bounty"]) for r in rr);d["bonus"]=sum((money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold", "Ran Myself") else 0)+money(r["rare_spawn_value"]) for r in rr);d["total"]=d["bounty"]+money(srow["loot_value"])+money(srow["salvage_value"])+d["bonus"];d["systems"]=", ".join(sorted(set(r["system_name"] or "Unknown" for r in rr))) if rr else "—";span=max(0,int((parse_iso(srow["ended_at"])-parse_iso(srow["started_at"])).total_seconds()));d["duration_label"]=f"{span//3600}h {(span%3600)//60}m" if span>=3600 else f"{span//60}m";sess.append(d)
+        k=parse_iso(srow["ended_at"]).date().isoformat()
+        if k in buckets:buckets[k]["loot"]+=money(srow["loot_value"]);buckets[k]["salvage"]+=money(srow["salvage_value"])
     for e in ess:
         k=parse_iso(e["date"]).date().isoformat()
         if k in buckets:buckets[k]["ess"]+=money(e["amount"])
     for b in buckets.values():
-        total_income=sum(money(b[k]) for k in ["bounty","ess","loot","salvage","bonus"])
-        b["isk_hr"]=total_income/b["seconds"]*3600 if b["seconds"] else 0
-    history_data={"days":days,"runs":[enrich(r) for r in rs[:200]],"sessions":sess[:100],"ess":[dict(e) for e in ess[:100]],"all_sessions":[dict(s) for s in alls],"chart_data":list(buckets.values())}
+        total_income=sum(money(b[k]) for k in ["bounty","ess","loot","salvage","bonus"]);b["isk_hr"]=total_income/b["seconds"]*3600 if b["seconds"] else 0
+    run_total=len(rs);session_total=len(sess);run_pages=max(1,(run_total+runs_per_page-1)//runs_per_page);session_pages=max(1,(session_total+sessions_per_page-1)//sessions_per_page)
+    run_page=min(run_page,run_pages);session_page=min(session_page,session_pages)
+    run_slice=rs[(run_page-1)*runs_per_page:run_page*runs_per_page];session_slice=sess[(session_page-1)*sessions_per_page:session_page*sessions_per_page]
+    avg_duration=(sum(effective_run_seconds(r) for r in rs)/run_total if run_total else 0);total_bonus=sum((money(r["escalation_sale_value"]) if r["escalation_status"] in ("Sold","Ran Myself") else 0)+money(r["rare_spawn_value"]) for r in rs)
+    recent_escalations=[enrich(r) for r in rs if (r["escalation_name"] or "").strip()][:8]
+    analytics_cutoff=utcnow()-timedelta(days=days+2)
+    analytics_runs=[enrich(r) for r in rs if r["ended_at"] and parse_iso(r["ended_at"])>=analytics_cutoff]
+    analytics_sessions=[d for d in sess if d.get("ended_at") and parse_iso(d["ended_at"])>=analytics_cutoff]
+    analytics_ess=[dict(e) for e in ess if e["date"] and parse_iso(e["date"])>=analytics_cutoff]
+    history_data={"days":days,"runs":analytics_runs if analytics else [enrich(r) for r in run_slice],"sessions":analytics_sessions if analytics else session_slice,"ess":analytics_ess if analytics else [dict(e) for e in ess[:100]],"analytics_runs":analytics_runs,"analytics_sessions":analytics_sessions,"analytics_ess":analytics_ess,"all_sessions":[dict(x) for x in alls],"chart_data":list(buckets.values()),"recent_escalations":recent_escalations,"run_page":run_page,"run_pages":run_pages,"run_total":run_total,"runs_per_page":runs_per_page,"session_page":session_page,"session_pages":session_pages,"session_total":session_total,"sessions_per_page":sessions_per_page,"summary":{"avg_duration_seconds":avg_duration,"total_bonus":total_bonus}}
     boot={"page":"history","history":history_data,"version":APP_VERSION}
     return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"History"})
 

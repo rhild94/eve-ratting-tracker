@@ -161,26 +161,32 @@ function runningView(run){
  renderWave();
 
  if(timerHandle)clearInterval(timerHandle);
- const start=new Date(run.started_at);
- const displaySeconds=()=>{
+ const startMs=new Date(run.started_at).getTime();
+ const serverElapsed=()=>{
   const paused=Number(run.paused_seconds||0);
   const end=run.paused_at?new Date(run.paused_at).getTime():Date.now();
-  return Math.max(0,Math.floor((end-start.getTime())/1000-paused));
+  return Math.max(0,Math.floor((end-startMs)/1000-paused));
  };
- const tick=()=>{let sec=displaySeconds();$("#timer").textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");$("#timer").classList.toggle("paused",!!run.is_paused)};
- tick();timerHandle=setInterval(tick,1000);
+ let uiElapsed=serverElapsed(),uiAnchor=Date.now(),uiPaused=!!run.is_paused;
+ const currentSeconds=()=>uiPaused?uiElapsed:Math.max(0,uiElapsed+Math.floor((Date.now()-uiAnchor)/1000));
+ const drawTimer=()=>{const sec=currentSeconds(),timer=$("#timer");if(!timer)return;timer.textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");timer.classList.toggle("paused",uiPaused)};
+ drawTimer();timerHandle=setInterval(drawTimer,250);
  $("#pauseBtn").addEventListener("click",async()=>{
-  const b=$("#pauseBtn"),previous=run;b.disabled=true;
-  if(!run.is_paused){
-   run={...run,is_paused:true,paused_at:new Date().toISOString()};
-   DATA.active=run;b.textContent="▶ Resume Timer";tick();
+  const b=$("#pauseBtn"),previous={...run},previousElapsed=uiElapsed,previousAnchor=uiAnchor,wasPaused=uiPaused;
+  b.disabled=true;
+  if(!wasPaused){
+   uiElapsed=currentSeconds();uiPaused=true;uiAnchor=Date.now();
+   run={...run,is_paused:true,paused_at:new Date().toISOString()};DATA.active=run;b.textContent="▶ Resume Timer";drawTimer();
   }
   try{
    const r=await fetch(`/api/run/${previous.id}/pause`,{method:"POST"}),j=await r.json();
-   if(!r.ok)throw new Error(j.error||"Could not pause timer.");
-   run=j.run;DATA.active=j.run;b.textContent=run.is_paused?"▶ Resume Timer":"⏸ Pause Timer";tick();
+   if(!r.ok)throw new Error(j.error||"Could not update timer.");
+   run=j.run;DATA.active=j.run;
+   if(wasPaused){uiPaused=false;uiAnchor=Date.now();}else{uiPaused=true;}
+   b.textContent=uiPaused?"▶ Resume Timer":"⏸ Pause Timer";drawTimer();
   }catch(err){
-   run=previous;DATA.active=previous;b.textContent=run.is_paused?"▶ Resume Timer":"⏸ Pause Timer";tick();alert(err.message||"Could not pause timer.");
+   run=previous;DATA.active=previous;uiElapsed=previousElapsed;uiAnchor=previousAnchor;uiPaused=wasPaused;
+   b.textContent=uiPaused?"▶ Resume Timer":"⏸ Pause Timer";drawTimer();alert(err.message||"Could not update timer.");
   }finally{b.disabled=false;}
  });
  $("#completeBtn").addEventListener("click",()=>completeRun(run.id));
