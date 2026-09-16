@@ -7,6 +7,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+OWNED_TABLES = ("characters", "runs", "sessions", "ess_events", "wallet_entries", "skill_snapshots")
+
 
 @pytest.fixture(params=["sqlite"] + (["postgres"] if os.getenv("ACCOUNT_TEST_POSTGRES_URL") else []))
 def isolated_merge(monkeypatch, tmp_path, request):
@@ -122,7 +124,7 @@ def test_merge_preserves_source_history_characters_and_destination_main(isolated
         db.execute("INSERT INTO ess_events(user_id,character_id,entry_id,date,amount,session_id) VALUES(2,2002,7001,?,321,?)", (app.iso(), sid))
         db.execute("INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,raw_json) VALUES(2,7002,2002,?,654,'{}')", (app.iso(),))
         db.execute("INSERT INTO skill_snapshots(user_id,character_id,captured_at,total_sp,skills_json,queue_json) VALUES(2,2002,?,777,'[]','[]')", (app.iso(),))
-        source_counts = {table: db.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=2").fetchone()["n"] for table in app.OWNED_TABLES}
+        source_counts = {table: db.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=2").fetchone()["n"] for table in OWNED_TABLES}
 
     stale_source_cookie = source.cookies.get("tracker_session")
     assert authenticate(app, monkeypatch, destination, 2002, connect=True).status_code == 303
