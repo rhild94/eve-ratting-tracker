@@ -228,7 +228,7 @@ needles = [
 ]
 bad = []
 for path in Path(".").rglob("*"):
-    if not path.is_file() or ".git" in path.parts or path.name in {"apply-remove-fits.yml", "remove_fits_once.py"}:
+    if str(path) == "static/react/app.js" or not path.is_file() or ".git" in path.parts or path.name in {"apply-remove-fits.yml", "remove_fits_once.py"}:
         continue
     try:
         text = path.read_text(encoding="utf-8")

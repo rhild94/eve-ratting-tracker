@@ -302,11 +302,3 @@ def test_dashboard_uses_session_performance_graph(page):
     expect(page.locator("body")).to_contain_text("Bounty + ESS only")
     expect(page.locator("body")).to_contain_text("Total ISK/h")
 
-
-def test_beta_fits_tab_and_tracker_selector_are_visible(page):
-    expect(page.locator(".side-nav")).to_contain_text("Fits")
-    expect(page.locator(".fit-selection-panel")).to_be_visible()
-    expect(page.locator(".beta-fit-select")).to_have_count(1)
-    page.goto(page.url.rstrip("/") + "/?view=fits")
-    expect(page.locator("body")).to_contain_text("Saved Fits")
-    expect(page.locator("#betaAddFit, #betaEmptyAdd").first).to_be_visible()

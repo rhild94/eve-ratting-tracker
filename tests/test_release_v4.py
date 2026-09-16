@@ -70,7 +70,7 @@ def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, te
                     anomaly,variant,started_at,ended_at,participants_json,notes,status,
                     combined_bounty,system_name,ships_json,session_id,escalation_name,
                     escalation_status,escalation_sale_value,rare_spawn_type,rare_spawn_value,
-                    paused_seconds,esi_synced_at,fit_selection_json
+                    paused_seconds,esi_synced_at
                 ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "Angel Hub", "Default", start.isoformat(), end.isoformat(), "[90000001]", "",
@@ -78,7 +78,7 @@ def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, te
                     "Angel Cartel Naval Shipyard" if i == 0 else None,
                     "Sold" if i == 0 else None,
                     123_000_000 if i == 0 else 0,
-                    None, 0, 0, end.isoformat(), "{}",
+                    None, 0, 0, end.isoformat(),
                 ),
             )
     page.goto(base_url(page) + "/history?days=7")
@@ -105,14 +105,14 @@ def test_progression_luck_statistics_render_from_all_recent_sites(page, test_app
                     anomaly,variant,started_at,ended_at,participants_json,notes,status,
                     combined_bounty,system_name,ships_json,escalation_name,escalation_status,
                     escalation_sale_value,rare_spawn_type,rare_spawn_value,paused_seconds,
-                    esi_synced_at,fit_selection_json
+                    esi_synced_at
                 ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "Angel Hub", "Default", start.isoformat(), end.isoformat(), "[90000001]", "",
                     10_000_000, "W-16DY", "[]",
                     "Angel Cartel Naval Shipyard" if i < 2 else None,
                     "Pending" if i < 2 else None, 0,
-                    rare[i], (i + 1) * 1_000_000, 0, end.isoformat(), "{}",
+                    rare[i], (i + 1) * 1_000_000, 0, end.isoformat(),
                 ),
             )
     page.goto(base_url(page) + "/progression?days=7")
@@ -136,11 +136,11 @@ def test_remove_character_preserves_historical_run(page, test_app):
         c.execute(
             """INSERT INTO runs(
                 anomaly,variant,started_at,ended_at,participants_json,notes,status,
-                combined_bounty,system_name,ships_json,paused_seconds,esi_synced_at,fit_selection_json
+                combined_bounty,system_name,ships_json,paused_seconds,esi_synced_at
             ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?)""",
             ("Angel Hub", "Default", (now-timedelta(minutes=2)).isoformat(), now.isoformat(),
              json.dumps([cid]), "historical-alt-run", 12_000_000, "W-16DY", "[]", 0,
-             now.isoformat(), "{}"),
+             now.isoformat()),
         )
         rid = c.execute("SELECT id FROM runs WHERE notes='historical-alt-run'").fetchone()[0]
     page.goto(base_url(page) + "/progression?view=characters")
