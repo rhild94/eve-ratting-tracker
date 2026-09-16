@@ -20,10 +20,10 @@ def upsert_alt(test_app, cid=90000002, name="Second Pilot", connected=1):
     now = datetime.now(timezone.utc).isoformat()
     with sqlite3.connect(db) as c:
         c.execute(
-            """INSERT INTO characters(
+            """INSERT INTO characters(user_id,
                 character_id,name,access_token,refresh_token,expires_at,connected_at,
                 cache_system_name,cache_ship_name,last_esi_sync,character_role,connected
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(1,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(character_id) DO UPDATE SET
                 name=excluded.name,access_token=excluded.access_token,
                 refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,
@@ -49,8 +49,7 @@ def test_pause_timer_freezes_exact_visible_stopwatch(page):
     assert page.locator("#timer").inner_text() == frozen
     page.click("#pauseBtn")
     expect(page.locator("#pauseBtn")).to_have_text("⏸ Pause Timer")
-    page.wait_for_timeout(1200)
-    assert page.locator("#timer").inner_text() != frozen
+    expect(page.locator("#timer")).not_to_have_text(frozen, timeout=3000)
 
 
 def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, test_app):
@@ -61,17 +60,17 @@ def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, te
             start = now - timedelta(hours=3, minutes=i * 2 + 1)
             end = start + timedelta(minutes=1)
             cur = c.execute(
-                "INSERT INTO sessions(started_at,ended_at,status,loot_value,salvage_value,notes) VALUES(?,?,'complete',0,0,'')",
+                "INSERT INTO sessions(user_id,started_at,ended_at,status,loot_value,salvage_value,notes) VALUES(1,?,?,'complete',0,0,'')",
                 (start.isoformat(), end.isoformat()),
             )
             sid = cur.lastrowid
             c.execute(
-                """INSERT INTO runs(
+                """INSERT INTO runs(user_id,
                     anomaly,variant,started_at,ended_at,participants_json,notes,status,
                     combined_bounty,system_name,ships_json,session_id,escalation_name,
                     escalation_status,escalation_sale_value,rare_spawn_type,rare_spawn_value,
                     paused_seconds,esi_synced_at
-                ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(1,?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "Angel Hub", "Default", start.isoformat(), end.isoformat(), "[90000001]", "",
                     1_000_000 + i, "W-16DY", "[]", sid,
@@ -101,12 +100,12 @@ def test_progression_luck_statistics_render_from_all_recent_sites(page, test_app
             start = now - timedelta(minutes=20 + i * 3)
             end = start + timedelta(minutes=2)
             c.execute(
-                """INSERT INTO runs(
+                """INSERT INTO runs(user_id,
                     anomaly,variant,started_at,ended_at,participants_json,notes,status,
                     combined_bounty,system_name,ships_json,escalation_name,escalation_status,
                     escalation_sale_value,rare_spawn_type,rare_spawn_value,paused_seconds,
                     esi_synced_at
-                ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(1,?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "Angel Hub", "Default", start.isoformat(), end.isoformat(), "[90000001]", "",
                     10_000_000, "W-16DY", "[]",
@@ -134,10 +133,10 @@ def test_remove_character_preserves_historical_run(page, test_app):
     now = datetime.now(timezone.utc)
     with sqlite3.connect(db) as c:
         c.execute(
-            """INSERT INTO runs(
+            """INSERT INTO runs(user_id,
                 anomaly,variant,started_at,ended_at,participants_json,notes,status,
                 combined_bounty,system_name,ships_json,paused_seconds,esi_synced_at
-            ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?)""",
+            ) VALUES(1,?,?,?,?,?,?, 'complete',?,?,?,?,?)""",
             ("Angel Hub", "Default", (now-timedelta(minutes=2)).isoformat(), now.isoformat(),
              json.dumps([cid]), "historical-alt-run", 12_000_000, "W-16DY", "[]", 0,
              now.isoformat()),
@@ -162,14 +161,14 @@ def test_both_characters_ess_are_aggregated_without_key_collision(test_app):
         with sqlite3.connect(db) as c:
             c.execute("DELETE FROM wallet_entries")
             c.execute(
-                "INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(1,?,?,?,?,?,?,?,?)",
                 (777, 90000001, now.isoformat(), 10_000_000, 0, "ess_escrow_transfer", "", "{}"),
             )
             c.execute(
-                "INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(1,?,?,?,?,?,?,?,?)",
                 (777, cid2, now.isoformat(), 20_000_000, 0, "ess_escrow_transfer", "", "{}"),
             )
-        with httpx.Client(base_url=test_app["base_url"], timeout=5) as client:
+        with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as client:
             dash = client.get("/api/dashboard").json()
             assert dash["stats"]["today_ess"] == 30_000_000
 
@@ -184,11 +183,11 @@ def test_both_characters_ess_are_aggregated_without_key_collision(test_app):
 
             with sqlite3.connect(db) as c:
                 c.execute(
-                    "INSERT INTO ess_events(entry_id,character_id,date,amount,session_id,match_status) VALUES(?,?,?,?,?,'manual')",
+                    "INSERT INTO ess_events(user_id,entry_id,character_id,date,amount,session_id,match_status) VALUES(1,?,?,?,?,?,'manual')",
                     (888, 90000001, now.isoformat(), 3_000_000, sid),
                 )
                 c.execute(
-                    "INSERT INTO ess_events(entry_id,character_id,date,amount,session_id,match_status) VALUES(?,?,?,?,?,'manual')",
+                    "INSERT INTO ess_events(user_id,entry_id,character_id,date,amount,session_id,match_status) VALUES(1,?,?,?,?,?,'manual')",
                     (888, cid2, now.isoformat(), 4_000_000, sid),
                 )
             html = client.get("/dashboard?days=7").text

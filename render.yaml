@@ -16,7 +16,7 @@ services:
         value: "10"
       - key: EVE_CLIENT_ID
         sync: false
-      - key: APP_ACCESS_KEY
+      - key: EVE_CLIENT_SECRET
         sync: false
     disk:
       name: tracker-data

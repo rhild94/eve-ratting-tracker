@@ -1,4 +1,6 @@
 import os
+import secrets
+import hashlib
 import shutil
 import socket
 import shutil as shell_shutil
@@ -39,7 +41,7 @@ def wait_for_server(url, timeout=12):
 @pytest.fixture(scope="session")
 def test_app(tmp_path_factory):
     work = tmp_path_factory.mktemp("eve_ratting_tracker")
-    for name in ["app.py", "static", "templates"]:
+    for name in ["app.py", "accounts.py", "static", "templates"]:
         src = PROJECT_ROOT / name
         dst = work / name
         if src.is_dir():
@@ -80,7 +82,7 @@ def test_app(tmp_path_factory):
     base_url = f"http://127.0.0.1:{port}"
     try:
         try:
-            wait_for_server(base_url)
+            wait_for_server(base_url+"/health")
         except Exception as exc:
             proc.terminate()
             try:
@@ -94,16 +96,20 @@ def test_app(tmp_path_factory):
             raise RuntimeError(f"{exc}\n--- app.py output ---\n{output}") from exc
         db = work / "ratting_tracker.db"
         now = "2026-09-05T12:00:00+00:00"
+        raw,csrf=secrets.token_urlsafe(48),secrets.token_urlsafe(32)
         with sqlite3.connect(db) as c:
+            c.execute("INSERT INTO users(id,created_at,primary_character_id) VALUES(1,?,90000001)",(int(time.time()),))
+            c.execute("INSERT INTO account_sync_state(user_id) VALUES(1)")
+            c.execute("INSERT INTO auth_sessions(token_hash,user_id,csrf_token,expires_at) VALUES(?,1,?,?)",(hashlib.sha256(raw.encode()).hexdigest(),csrf,int(time.time())+86400))
             c.execute(
-                """INSERT INTO characters(
+                """INSERT INTO characters(user_id,
                     character_id,name,access_token,refresh_token,expires_at,connected_at,
                     cache_system_name,cache_ship_name,last_esi_sync
-                ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(1,?,?,?,?,?,?,?,?,?)""",
                 (90000001, "Playwright Pilot", "fake-token", "fake-refresh", 4102444800, now,
                  "W-16DY", "Praxis", now),
             )
-        yield {"base_url": base_url, "work": work, "process": proc}
+        yield {"base_url": base_url, "work": work, "process": proc,"cookies":{"tracker_session":raw},"headers":{"X-CSRF-Token":csrf}}
     finally:
         proc.terminate()
         try:
@@ -140,6 +146,7 @@ def browser():
 @pytest.fixture()
 def page(browser, test_app):
     context = browser.new_context()
+    context.add_cookies([{"name":"tracker_session","value":test_app["cookies"]["tracker_session"],"url":test_app["base_url"]}])
     # Remote EVE images are visual-only for regression purposes and should not
     # make CI navigation depend on external image-service latency.
     context.route("https://images.evetech.net/**", lambda route: route.abort())
