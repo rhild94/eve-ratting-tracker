@@ -175,7 +175,6 @@ def init_db():
             "CREATE TABLE IF NOT EXISTS sessions(id BIGSERIAL PRIMARY KEY,started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL DEFAULT 'active',loot_value DOUBLE PRECISION DEFAULT 0,salvage_value DOUBLE PRECISION DEFAULT 0,notes TEXT)",
             "CREATE TABLE IF NOT EXISTS ess_events(entry_id BIGINT PRIMARY KEY,character_id BIGINT NOT NULL,date TEXT NOT NULL,amount DOUBLE PRECISION NOT NULL,session_id BIGINT,match_status TEXT NOT NULL DEFAULT 'unassigned')",
             "CREATE TABLE IF NOT EXISTS esi_cache(cache_key TEXT PRIMARY KEY,payload_json TEXT NOT NULL,expires_at TEXT,updated_at TEXT NOT NULL)",
-            "CREATE TABLE IF NOT EXISTS fits(id TEXT PRIMARY KEY,character_id BIGINT,character_name TEXT,ship TEXT NOT NULL,name TEXT NOT NULL,raw_text TEXT NOT NULL,groups_json TEXT NOT NULL,type_ids_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS esi_sync_state(id INTEGER PRIMARY KEY,last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT)"
         ]
         if not USE_POSTGRES:
@@ -186,10 +185,14 @@ def init_db():
         else:
             c.execute("INSERT OR IGNORE INTO esi_sync_state(id) VALUES(1)")
         ensure_col(c,"oauth_states","code_verifier TEXT")
-        for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT","fit_selection_json TEXT"]:
+        for d in ["variant TEXT","session_id BIGINT","escalation_name TEXT","escalation_status TEXT","escalation_sale_value DOUBLE PRECISION DEFAULT 0","rare_spawn_type TEXT","rare_spawn_name TEXT","rare_spawn_value DOUBLE PRECISION DEFAULT 0","paused_at TEXT","paused_seconds DOUBLE PRECISION DEFAULT 0","esi_synced_at TEXT"]:
             ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
         for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT","character_role TEXT DEFAULT 'alt'","connected INTEGER DEFAULT 1"]:
             ensure_col(c,"characters",d)
+        # One-time database cleanup for the retired feature. Remove this block after the production migration runs.
+        c.execute("DROP TABLE IF EXISTS fits")
+        if col_exists(c,"runs","fit_selection_json"):
+            c.execute("ALTER TABLE runs DROP COLUMN fit_selection_json")
         # Preserve both realized escalation outcomes; pending and expired values are not income.
         c.execute("UPDATE runs SET escalation_sale_value=0 WHERE COALESCE(escalation_status,'') NOT IN ('Sold','Ran Myself') AND COALESCE(escalation_sale_value,0)<>0")
 init_db()
@@ -474,8 +477,6 @@ def enrich(r):
     d["duration_seconds"]=dur; d["duration_label"]=f"{dur//60}m {dur%60:02d}s" if (dur or r["ended_at"]) else "0m 00s"
     d["isk_hr"]=money(d.get("combined_bounty"))/dur*3600 if dur else 0
     d["participants"]=json.loads(d["participants_json"]); d["ships"]=json.loads(d["ships_json"]) if d.get("ships_json") else []
-    try:d["fit_selection"]=json.loads(d.get("fit_selection_json") or "{}")
-    except:d["fit_selection"]={}
     d["is_paused"]=bool(d.get("paused_at"))
     d["escalation_sales"]=money(d.get("escalation_sale_value")) if d.get("escalation_status")=="Sold" else 0
     d["escalation_loot"]=money(d.get("escalation_sale_value")) if d.get("escalation_status")=="Ran Myself" else 0
@@ -648,54 +649,6 @@ async def api_remove_character(cid:int):
 @app.get("/api/dashboard")
 async def api_dashboard(): return JSONResponse(await dashboard_payload())
 
-def fit_payload(row):
-    d=dict(row)
-    try:d["groups"]=json.loads(d.pop("groups_json") or "{}")
-    except:d["groups"]={}
-    try:
-        tids=json.loads(d.pop("type_ids_json") or "{}")
-        d.update(tids)
-    except:pass
-    return d
-
-@app.get("/api/fits")
-async def api_fits():
-    with db() as c:rows=c.execute("SELECT * FROM fits ORDER BY updated_at DESC,name").fetchall()
-    return JSONResponse({"ok":True,"fits":[fit_payload(r) for r in rows]})
-
-@app.post("/api/fits/resolve")
-async def api_resolve_fit_types(request:Request):
-    body=await request.json();names=[str(x).strip() for x in body.get("names",[]) if str(x).strip()][:250]
-    if not names:return JSONResponse({"ok":True,"types":{}})
-    try:
-        h={"Accept":"application/json","Content-Type":"application/json","User-Agent":"Rafael-EVE-Ratting-Tracker/Beta","X-Compatibility-Date":COMPAT_DATE}
-        async with httpx.AsyncClient(timeout=20) as cl:
-            r=await cl.post(ESI+"/universe/ids/",headers=h,json=names);r.raise_for_status();data=r.json()
-        types={x.get("name"):x.get("id") for x in data.get("inventory_types",[]) if x.get("name") and x.get("id")}
-        return JSONResponse({"ok":True,"types":types})
-    except Exception as e:
-        return JSONResponse({"ok":False,"types":{},"error":f"{type(e).__name__}: {e}"},502)
-
-@app.post("/api/fits")
-async def api_save_fit(request:Request):
-    body=await request.json();fid=str(body.get("id") or secrets.token_hex(16));ship=str(body.get("ship") or '').strip();name=str(body.get("name") or '').strip()
-    if not ship or not name:return JSONResponse({"ok":False,"error":"Ship and fit name are required."},400)
-    now=iso();created=str(body.get("created_at") or now);cid=body.get("character_id")
-    try:cid=int(cid) if cid not in (None,'') else None
-    except:cid=None
-    groups=body.get("groups") or {};type_ids={"ship_type_id":body.get("ship_type_id")}
-    with db() as c:
-        c.execute("""INSERT INTO fits(id,character_id,character_name,ship,name,raw_text,groups_json,type_ids_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)
-                     ON CONFLICT(id) DO UPDATE SET character_id=excluded.character_id,character_name=excluded.character_name,ship=excluded.ship,name=excluded.name,raw_text=excluded.raw_text,groups_json=excluded.groups_json,type_ids_json=excluded.type_ids_json,updated_at=excluded.updated_at""",
-                  (fid,cid,str(body.get("character_name") or "Unassigned"),ship,name,str(body.get("raw_text") or ""),json.dumps(groups),json.dumps(type_ids),created,now))
-        row=c.execute("SELECT * FROM fits WHERE id=?",(fid,)).fetchone()
-    return JSONResponse({"ok":True,"fit":fit_payload(row)})
-
-@app.delete("/api/fits/{fit_id}")
-async def api_delete_fit(fit_id:str):
-    with db() as c:c.execute("DELETE FROM fits WHERE id=?",(fit_id,))
-    return JSONResponse({"ok":True})
-
 @app.get("/login")
 async def login():
     if not CLIENT_ID:return HTMLResponse("EVE connection is not configured yet. The local tracker is fully available; add a Client ID in Settings when you want to connect ESI.",503)
@@ -792,7 +745,6 @@ async def api_start_run(request:Request):
         if c.execute("SELECT 1 FROM runs WHERE status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
         sid=ensure_session(c,st)
         rid=(c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL) RETURNING id",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).fetchone()["id"] if USE_POSTGRES else c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid)
-        c.execute("UPDATE runs SET fit_selection_json=? WHERE id=?",(json.dumps(body.get("fit_selection") or {}),rid))
         run=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
     return JSONResponse({"ok":True,"run":enrich(run),"session_id":sid})
 

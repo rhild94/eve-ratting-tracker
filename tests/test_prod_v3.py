@@ -6,13 +6,12 @@ def base_url(page):
     return u.split("/dashboard")[0].split("/history")[0].split("/progression")[0].rstrip("/")
 
 
-def test_global_sync_and_single_fits_navigation(page):
+def test_global_sync_navigation(page):
     base = base_url(page)
     for path in ["/", "/dashboard", "/history", "/progression", "/progression?view=characters"]:
         page.goto(base + path)
         expect(page.locator(".eve-time")).to_be_visible()
         expect(page.locator(".global-sync-card")).to_be_visible()
-        expect(page.locator(".side-nav a").filter(has_text="Fits")).to_have_count(1)
 
 
 def test_history_export_is_removed(page):
@@ -27,7 +26,6 @@ def test_character_details_opens_training_queue_only(page):
     btn.click()
     expect(page.locator(".queue-modal")).to_be_visible()
     expect(page.locator(".queue-modal")).to_contain_text("TRAINING QUEUE")
-    expect(page.locator(".queue-modal")).not_to_contain_text("Fit Readiness")
 
 
 def test_progression_uses_site_performance_without_training_snapshot(page):
