@@ -84,15 +84,20 @@ def harden_postgres_schema(c, postgres):
             c.execute(f"REVOKE ALL PRIVILEGES ON SEQUENCE public.{sequence} FROM {_pg_ident(role)}")
 
     # This project owns the public schema for tracker data. Client-facing Supabase
-    # roles must never execute public-schema functions directly.
+    # roles must never execute public-schema functions directly. Revoke both global
+    # and public-schema defaults: PostgreSQL applies global defaults before schema
+    # defaults, so a schema-local REVOKE alone cannot cancel a global grant.
     for role in roles:
         role_ident = _pg_ident(role)
         c.execute(f"REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM {role_ident}")
         c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM {role_ident}")
         c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM {role_ident}")
         c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM {role_ident}")
     c.execute("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC")
-    c.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC")
+    c.execute("ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC")
 
     print(
         "PostgreSQL public schema hardened: "
