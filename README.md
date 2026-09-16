@@ -20,6 +20,14 @@ The shared access key and web-based global configuration editor are retired. `AP
 
 Schema initialization runs the account migration in one transaction. Before any login, all existing private rows are assigned to initial account 1 and the existing explicit Main is recorded. Existing server-held EVE token owner identities are pinned to prevent a subsequently transferred character from claiming history. Disconnected characters without tokens remain reserved to the initial account and can only be reconnected from that authenticated account. Ambiguous Main selection or missing identity for a connected character stops startup instead of assigning data to the first visitor. Row counts and ownership are checked, and `account_migrations` stores the audit. No tracked records or income fields are deleted or rewritten. Keep a database backup before upgrading; rollback after migration must use account-aware code, because older releases do not enforce ownership.
 
+## Production database security
+
+The hosted tracker uses a direct PostgreSQL `DATABASE_URL`; the browser never connects to Supabase directly. Keep the Supabase **Data API disabled** for this project and do not add Supabase client/service-role keys to the frontend.
+
+On every PostgreSQL startup/migration the tracker now applies defense-in-depth hardening to the app-owned `public` schema: Row Level Security is enabled on every app-owned public table, all table/sequence privileges are revoked from Supabase client API roles (`anon`, `authenticated`, and `service_role`) when those roles exist, public-schema function execution is revoked from those roles and `PUBLIC`, and safe default privileges are installed for future tables, sequences, and functions. RLS is deliberately not forced, so the direct owning backend connection continues to work while client API roles remain unable to access tracker data.
+
+This startup hardening is idempotent and runs after schema creation, so future application migrations are secured automatically. PostgreSQL regression tests simulate permissive Supabase defaults and verify the lockdown as well as continued backend read/write access.
+
 Public `/health` returns only health and version. Private responses use `Cache-Control: no-store`. There are no corporation/group sharing features or administrative login bypasses.
 
 Your runtime `.env`, `.venv`, and `ratting_tracker.db` stay local and are excluded from Git.
@@ -33,7 +41,7 @@ python -m pytest tests -v
 ```
 
 GitHub Actions runs the API and browser regression suite automatically for every push to `main` and for pull requests.
-CI also runs the account security and migration tests against PostgreSQL 16. To run those locally, set `ACCOUNT_TEST_POSTGRES_URL` to a **disposable test server** with database creation privileges; the tests create and delete isolated databases. Never point it at production. Merge only after the complete suite is green. Render deploys automatically after main checks pass; do not manually trigger a second deploy.
+CI also runs the account security and migration tests against PostgreSQL 16. To run those locally, set `ACCOUNT_TEST_POSTGRES_URL` to a **disposable test server** with database creation and role-creation privileges; the tests create and delete isolated databases and may create the Supabase-compatible `anon`, `authenticated`, and `service_role` test roles. Never point it at production. Merge only after the complete suite is green. Render deploys automatically after main checks pass; do not manually trigger a second deploy.
 
 
 ## Frontend architecture (v9)
