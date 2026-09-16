@@ -71,7 +71,7 @@ def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, te
                     combined_bounty,system_name,ships_json,session_id,escalation_name,
                     escalation_status,escalation_sale_value,rare_spawn_type,rare_spawn_value,
                     paused_seconds,esi_synced_at
-                ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "Angel Hub", "Default", start.isoformat(), end.isoformat(), "[90000001]", "",
                     1_000_000 + i, "W-16DY", "[]", sid,
@@ -106,7 +106,7 @@ def test_progression_luck_statistics_render_from_all_recent_sites(page, test_app
                     combined_bounty,system_name,ships_json,escalation_name,escalation_status,
                     escalation_sale_value,rare_spawn_type,rare_spawn_value,paused_seconds,
                     esi_synced_at
-                ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?,?,?,?,?)""",
                 (
                     "Angel Hub", "Default", start.isoformat(), end.isoformat(), "[90000001]", "",
                     10_000_000, "W-16DY", "[]",
@@ -137,7 +137,7 @@ def test_remove_character_preserves_historical_run(page, test_app):
             """INSERT INTO runs(
                 anomaly,variant,started_at,ended_at,participants_json,notes,status,
                 combined_bounty,system_name,ships_json,paused_seconds,esi_synced_at
-            ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?,?)""",
+            ) VALUES(?,?,?,?,?,?, 'complete',?,?,?,?,?)""",
             ("Angel Hub", "Default", (now-timedelta(minutes=2)).isoformat(), now.isoformat(),
              json.dumps([cid]), "historical-alt-run", 12_000_000, "W-16DY", "[]", 0,
              now.isoformat()),
