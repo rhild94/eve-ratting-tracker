@@ -4,7 +4,7 @@ import httpx
 
 def test_local_run_lifecycle_and_bonus_persistence(test_app):
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly": "Angel Haven",
             "variant": "Default",
@@ -50,7 +50,7 @@ def test_local_run_lifecycle_and_bonus_persistence(test_app):
 
 def test_dashboard_reports_completed_run_as_pending_esi(test_app):
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly": "Angel Hub", "variant": "Default",
             "participants": [90000001], "notes": ""
@@ -65,7 +65,7 @@ def test_dashboard_reports_completed_run_as_pending_esi(test_app):
 
 def test_end_session_saves_loot_and_salvage(test_app):
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly": "Angel Haven", "variant": "Default",
             "participants": [90000001], "notes": ""
@@ -84,7 +84,7 @@ def test_end_session_saves_loot_and_salvage(test_app):
 
 def test_invalid_start_is_rejected_without_creating_run(test_app):
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly": "Angel Haven", "variant": "Default",
             "participants": [], "notes": ""
@@ -98,11 +98,11 @@ def test_dashboard_exposes_esi_sync_health(test_app):
     db = test_app["work"] / "ratting_tracker.db"
     with sqlite3.connect(db) as c:
         c.execute(
-            "UPDATE esi_sync_state SET last_attempt=?,last_success=?,last_error=?,next_check=? WHERE id=1",
+            "UPDATE account_sync_state SET last_attempt=?,last_success=?,last_error=?,next_check=? WHERE user_id=1",
             ("2026-09-05T12:00:00+00:00", "2026-09-05T11:30:00+00:00",
              "simulated ESI outage", "2026-09-05T12:30:00+00:00"),
         )
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         e = c.get("/api/dashboard").json()["esi"]
         assert e["interval_minutes"] == 30
         assert e["last_error"] == "simulated ESI outage"
@@ -113,7 +113,7 @@ def test_dashboard_exposes_esi_sync_health(test_app):
 def test_delete_completed_run_returns_promptly(test_app):
     import time
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly": "Angel Haven",
             "variant": "Default",
@@ -131,7 +131,7 @@ def test_delete_completed_run_returns_promptly(test_app):
 
 
 def test_progression_page_loads_without_snapshots(test_app):
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r = c.get("/progression")
         assert r.status_code == 200
         assert '"page": "progression"' in r.text
@@ -139,7 +139,7 @@ def test_progression_page_loads_without_snapshots(test_app):
 
 def test_session_update_api(test_app):
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={"anomaly":"Angel Haven","variant":"Default","participants":[90000001],"notes":""})
         rid = r.json()["run"]["id"]
         c.post(f"/api/run/{rid}/complete")
@@ -160,11 +160,11 @@ def test_progression_uses_cached_snapshot_and_names(test_app):
     db = test_app["work"] / "ratting_tracker.db"
     with sqlite3.connect(db) as c:
         c.execute("INSERT INTO type_names(type_id,name) VALUES(?,?)", (3300, "Gunnery"))
-        c.execute("INSERT INTO skill_snapshots(character_id,captured_at,total_sp,skills_json,queue_json) VALUES(?,?,?,?,?)",
+        c.execute("INSERT INTO skill_snapshots(user_id,character_id,captured_at,total_sp,skills_json,queue_json) VALUES(1,?,?,?,?,?)",
                   (90000001, "2026-09-05T12:00:00+00:00", 1234567,
                    json.dumps([{"skill_id":3300,"trained_skill_level":3}]),
                    json.dumps([{"skill_id":3300,"finished_level":4,"finish_date":"2026-09-06T12:00:00Z"}])))
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r = c.get("/progression")
         assert r.status_code == 200
         assert '"total_sp": 1234567' in r.text
@@ -175,9 +175,9 @@ def test_ess_history_shows_character_name_without_assignment_controls(test_app):
     import sqlite3
     db = test_app["work"] / "ratting_tracker.db"
     with sqlite3.connect(db) as c:
-        c.execute("INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",
+        c.execute("INSERT INTO ess_events(user_id,entry_id,character_id,date,amount) VALUES(1,?,?,?,?)",
                   (999001,90000001,"2026-09-05T06:25:00+00:00",12230000))
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r = c.get("/history")
         assert r.status_code == 200
         assert "Playwright Pilot" in r.text
@@ -191,7 +191,7 @@ def test_delete_session_and_immediate_start_never_500(test_app):
     import time
 
     base = test_app["base_url"]
-    with httpx.Client(base_url=base, timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly":"Angel Haven","variant":"Default",
             "participants":[90000001],"notes":"concurrency regression"
@@ -208,13 +208,13 @@ def test_delete_session_and_immediate_start_never_500(test_app):
 
     def do_delete():
         gate.wait()
-        with httpx.Client(base_url=base, timeout=10) as c:
+        with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=10) as c:
             results["delete"] = c.delete(f"/api/session/{sid}")
 
     def do_start():
         gate.wait()
         time.sleep(0.02)
-        with httpx.Client(base_url=base, timeout=10) as c:
+        with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base, timeout=10) as c:
             results["start"] = c.post("/api/run/start", json={
                 "anomaly":"Angel Hub","variant":"Default",
                 "participants":[90000001],"notes":"after delete"
@@ -232,7 +232,7 @@ def test_delete_session_and_immediate_start_never_500(test_app):
 def test_client_start_time_is_preserved(test_app):
     from datetime import datetime, timezone
     started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r = c.post("/api/run/start", json={
             "anomaly":"Angel Haven","variant":"Default",
             "participants":[90000001],"notes":"",
@@ -244,7 +244,7 @@ def test_client_start_time_is_preserved(test_app):
 
 
 def test_main_character_role_endpoint(test_app):
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r = c.post("/api/character/90000001/main")
         assert r.status_code == 200, r.text
         chars = c.get("/api/dashboard").json()["characters"]
@@ -261,29 +261,29 @@ def test_bounty_tick_is_allocated_across_overlapping_sites(test_app):
     db = test_app["work"] / "ratting_tracker.db"
     with sqlite3.connect(db) as c:
         c.execute("DELETE FROM wallet_entries")
-        c.execute("""INSERT INTO sessions(id,started_at,ended_at,status) VALUES(?,?,?,'complete')""",
+        c.execute("""INSERT INTO sessions(user_id,id,started_at,ended_at,status) VALUES(1,?,?,?,'complete')""",
                   (101,"2026-09-05T12:00:00+00:00","2026-09-05T12:20:00+00:00"))
-        c.execute("""INSERT INTO runs(
+        c.execute("""INSERT INTO runs(user_id,
             id,anomaly,variant,started_at,ended_at,participants_json,notes,status,
             combined_bounty,system_name,ships_json,session_id,paused_seconds
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (201,"Angel Haven","Gas Haven · Chemical Factory","2026-09-05T12:00:00+00:00",
                    "2026-09-05T12:10:00+00:00","[90000001]","",'complete',0,"W-16DY","[]",101,0))
-        c.execute("""INSERT INTO runs(
+        c.execute("""INSERT INTO runs(user_id,
             id,anomaly,variant,started_at,ended_at,participants_json,notes,status,
             combined_bounty,system_name,ships_json,session_id,paused_seconds
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (202,"Angel Haven","Gas Haven · Chemical Factory","2026-09-05T12:10:00+00:00",
                    "2026-09-05T12:20:00+00:00","[90000001]","",'complete',0,"W-16DY","[]",101,0))
-        c.execute("""INSERT INTO wallet_entries(
+        c.execute("""INSERT INTO wallet_entries(user_id,
             entry_id,character_id,date,amount,balance,ref_type,description,raw_json
-        ) VALUES(?,?,?,?,?,?,?,?)""",
+        ) VALUES(1,?,?,?,?,?,?,?,?)""",
                   (7001,90000001,"2026-09-05T12:20:00+00:00",20000000,0,"bounty_prizes","tick","{}"))
 
     env=os.environ.copy()
     env["TRACKER_DB_PATH"]=str(db)
     env["ESI_AUTO_SYNC_INITIAL_DELAY_SECONDS"]="3600"
-    p=subprocess.run([sys.executable,"-c","import app; app.reconcile_bounties()"],
+    p=subprocess.run([sys.executable,"-c","import app; app.account_context.set(1); app.reconcile_bounties()"],
                      cwd=test_app["work"],env=env,capture_output=True,text=True,timeout=15)
     assert p.returncode == 0, p.stdout + p.stderr
 
@@ -295,7 +295,7 @@ def test_bounty_tick_is_allocated_across_overlapping_sites(test_app):
 
 
 def test_dashboard_page_loads(test_app):
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r=c.get("/dashboard")
         assert r.status_code == 200
         assert '"page": "dashboard"' in r.text
@@ -310,28 +310,28 @@ def test_today_wallet_cards_sum_all_connected_characters_without_runs(test_app):
     now=datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with sqlite3.connect(db) as c:
         c.execute("DELETE FROM wallet_entries")
-        c.execute("""INSERT OR REPLACE INTO characters(
+        c.execute("""INSERT OR REPLACE INTO characters(user_id,
             character_id,name,access_token,refresh_token,expires_at,connected_at,
             cache_system_name,cache_ship_name,last_esi_sync,character_role
-        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES(1,?,?,?,?,?,?,?,?,?,?)""",
         (90000002,"Second Pilot","fake-token","fake-refresh",4102444800,now,
          "W-16DY","Praxis",now,"alt"))
         # Two characters: bounty must be combined even with zero tracked runs.
-        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
-                     VALUES(?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
                   (8101,90000001,now,3920000,0,"bounty_prizes","main tick","{}"))
-        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
-                     VALUES(?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
                   (8102,90000002,now,4080000,0,"bounty_prizes","alt tick","{}"))
         # ESS is a day-level wallet metric and must not require a session/run.
-        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
-                     VALUES(?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
                   (8103,90000001,now,12230000,0,"ess_escrow_transfer","ESS","{}"))
-        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
-                     VALUES(?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
                   (8104,90000002,now,11770000,0,"ess_escrow_transfer","ESS","{}"))
 
-    with httpx.Client(base_url=test_app["base_url"],timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"],timeout=5) as c:
         stats=c.get("/api/dashboard").json()["stats"]
         assert stats["today_isk"] == pytest.approx(8000000)
         assert stats["today_ess"] == pytest.approx(24000000)
@@ -351,22 +351,22 @@ def test_wallet_entry_ids_are_scoped_per_character(test_app):
     now=datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with sqlite3.connect(db) as c:
         c.execute("DELETE FROM wallet_entries")
-        c.execute("""INSERT OR REPLACE INTO characters(
+        c.execute("""INSERT OR REPLACE INTO characters(user_id,
             character_id,name,access_token,refresh_token,expires_at,connected_at,
             cache_system_name,cache_ship_name,last_esi_sync,character_role
-        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES(1,?,?,?,?,?,?,?,?,?,?)""",
         (90000002,"Second Pilot","fake-token","fake-refresh",4102444800,now,
          "W-16DY","Praxis",now,"alt"))
         # ESI journal entry ids can collide across characters. Both rows must survive.
         same_entry_id=99112233
-        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
-                     VALUES(?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
                   (same_entry_id,90000001,now,3920000,0,"bounty_prizes","main","{}"))
-        c.execute("""INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
-                     VALUES(?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json)
+                     VALUES(1,?,?,?,?,?,?,?,?)""",
                   (same_entry_id,90000002,now,4080000,0,"bounty_prizes","alt","{}"))
 
-    with httpx.Client(base_url=test_app["base_url"],timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"],timeout=5) as c:
         stats=c.get("/api/dashboard").json()["stats"]
         assert stats["today_isk"] == pytest.approx(8000000)
 
@@ -378,7 +378,7 @@ def test_wallet_entry_ids_are_scoped_per_character(test_app):
 
 
 def test_hd_background_payload_is_complete_webp(test_app):
-    with httpx.Client(base_url=test_app["base_url"], timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app["base_url"], timeout=5) as c:
         r=c.get("/art/eve-bg.webp")
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("image/webp")
@@ -390,7 +390,7 @@ def test_hd_background_payload_is_complete_webp(test_app):
 
 def test_non_sold_escalation_value_is_cleared_by_backend(test_app):
     base=test_app["base_url"]
-    with httpx.Client(base_url=base,timeout=5) as c:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=base,timeout=5) as c:
         r=c.post("/api/run/start",json={"anomaly":"Angel Hub","variant":"Default","participants":[90000001],"notes":""});rid=r.json()["run"]["id"]
         assert c.post(f"/api/run/{rid}/complete").status_code==200
         assert c.post(f"/api/run/{rid}/bonus",json={"escalation_name":"Angel Capital Staging","escalation_status":"Sold","escalation_sale_value":30000000}).status_code==200

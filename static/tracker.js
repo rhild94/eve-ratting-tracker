@@ -96,7 +96,6 @@ function startForm(){
  <div class="field"><label>Anomaly</label><select id="anomaly">${opts}</select></div>
  <div class="field"><label>Variant</label><select id="variant"></select><div id="variantHint" class="hint"></div></div>
  <div class="field full"><label>Participants</label><div class="participants">${DATA.characters.map(participantCard).join("")}</div></div>
- <div class="field full"><label>Quick note <span class="muted">(optional)</span></label><input id="runNotes" placeholder="Only if something unusual happened"></div>
  <div class="start-row"><button id="startBtn" class="start big">▶ Start Site</button></div>
  </div>`;
 }
@@ -122,7 +121,7 @@ function waveRows(w){
 }
 function runningView(run){
  const waves=(window.SITE_DATA[run.anomaly]?.variants||{})[run.variant||"Default"]||[];
- let wave=Number(localStorage.getItem("wave_"+run.id)||0);wave=Math.max(0,Math.min(wave,Math.max(0,waves.length-1)));
+ let wave=Number(sessionStorage.getItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+run.id)||0);wave=Math.max(0,Math.min(wave,Math.max(0,waves.length-1)));
 
  const renderWave=()=>{
   const box=$("#waveBox");if(!box)return;
@@ -145,9 +144,9 @@ function runningView(run){
     </aside>
    </div>
    <div class="helper-nav wave-nav"><button id="prevWave" ${wave===0?"disabled":""}>← Previous Wave</button><button id="nextWave" class="good" ${wave===waves.length-1?"disabled":""}>${wave===waves.length-1?"Final Wave":"Next Wave →"}</button></div>`;
-  box.querySelectorAll(".wave-step").forEach(btn=>btn.addEventListener("click",()=>{wave=Number(btn.dataset.wave);localStorage.setItem("wave_"+run.id,wave);renderWave()}));
-  $("#prevWave")?.addEventListener("click",()=>{if(wave>0){wave--;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
-  $("#nextWave")?.addEventListener("click",()=>{if(wave<waves.length-1){wave++;localStorage.setItem("wave_"+run.id,wave);renderWave()}});
+  box.querySelectorAll(".wave-step").forEach(btn=>btn.addEventListener("click",()=>{wave=Number(btn.dataset.wave);sessionStorage.setItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+run.id,wave);renderWave()}));
+  $("#prevWave")?.addEventListener("click",()=>{if(wave>0){wave--;sessionStorage.setItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+run.id,wave);renderWave()}});
+  $("#nextWave")?.addEventListener("click",()=>{if(wave<waves.length-1){wave++;sessionStorage.setItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+run.id,wave);renderWave()}});
  };
 
  $("#trackerContent").innerHTML=`<div class="running-site-card">
@@ -239,7 +238,7 @@ async function startRun(){
  const btn=$("#startBtn");btn.disabled=true;setStatus("Starting…");
  const participants=[...document.querySelectorAll(".participant-card input:checked")].map(x=>Number(x.value));
  const clickedAt=new Date().toISOString();
- const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,notes:$("#runNotes").value,client_started_at:clickedAt};
+ const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,client_started_at:clickedAt};
  if(!participants.length){alert("Choose at least one participant.");btn.disabled=false;setStatus("");return;}
  startingView(payload,clickedAt);
  const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),60000);
@@ -264,7 +263,7 @@ async function completeRun(id){
  $("#completeBtn").disabled=true;setStatus("Completing…");
  const r=await fetch(`/api/run/${id}/complete`,{method:"POST"});const j=await r.json();
  if(!r.ok){alert(j.error||"Could not complete.");$("#completeBtn").disabled=false;return;}
- if(timerHandle)clearInterval(timerHandle);localStorage.removeItem("wave_"+id);setStatus("Local data saved ✓ · ESI pending");
+ if(timerHandle)clearInterval(timerHandle);sessionStorage.removeItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+id);setStatus("Local data saved ✓ · ESI pending");
  showQuickResult(j.run,j.escalations,j.bounty_pending);
 }
 function showQuickResult(run,escalations,bountyPending){
@@ -336,7 +335,7 @@ async function endSession(){
 }
 async function deleteRunFromTracker(id){
  if(!confirm("Delete/cancel this run? Use this for test runs. This cannot be undone."))return;
- const r=await fetch(`/api/run/${id}`,{method:"DELETE"});if(r.ok){if(timerHandle)clearInterval(timerHandle);localStorage.removeItem("wave_"+id);await refreshDashboard();}
+ const r=await fetch(`/api/run/${id}`,{method:"DELETE"});if(r.ok){if(timerHandle)clearInterval(timerHandle);sessionStorage.removeItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+id);await refreshDashboard();}
 }
 function showModal(){$("#modalBackdrop").classList.remove("hidden")}
 function hideModal(){$("#modalBackdrop").classList.add("hidden")}

@@ -14,6 +14,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tracker_test
+          POSTGRES_PASSWORD: test_only_password
+          POSTGRES_DB: tracker_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tracker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ACCOUNT_TEST_POSTGRES_URL: postgresql://tracker_test:test_only_password@localhost:5432/tracker_test
 
     steps:
       - name: Checkout repository
@@ -46,22 +62,11 @@ jobs:
       - name: Run regression suite
         run: python -m pytest tests -v --tb=short
 
-      - name: Commit generated frontend bundle
-        if: success() && github.event_name == 'push'
-        run: |
-          if ! git diff --quiet -- static/react/app.js; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add static/react/app.js
-            git commit -m "Build React frontend bundle"
-            git push
-          fi
-
       - name: Build downloadable tracker package
         if: success()
         run: |
           mkdir -p release/eve-ratting-tracker
-          cp app.py launcher.py RUN_TRACKER.bat requirements.txt README.md VERSION .env.example release/eve-ratting-tracker/
+          cp app.py accounts.py launcher.py RUN_TRACKER.bat requirements.txt README.md VERSION .env.example release/eve-ratting-tracker/
           cp -r static templates release/eve-ratting-tracker/
           cd release
           zip -r eve-ratting-tracker.zip eve-ratting-tracker

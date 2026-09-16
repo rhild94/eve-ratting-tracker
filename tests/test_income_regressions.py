@@ -29,7 +29,7 @@ def completed_run(client):
 
 @pytest.mark.parametrize('status', ['Sold', 'Ran Myself'])
 def test_realized_escalation_income_across_edits_and_reports(test_app, status):
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         rid, sid = completed_run(client)
         assert client.post('/api/session/end', json={'loot_value': 2000000, 'salvage_value': 3000000}).status_code == 200
         for amount in [30000000, 45000000, 0]:
@@ -52,21 +52,21 @@ def test_realized_escalation_income_across_edits_and_reports(test_app, status):
 
 
 def test_startup_preserves_ran_myself_income(test_app):
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         rid, _ = completed_run(client)
     with sqlite3.connect(test_app['work'] / 'ratting_tracker.db') as conn:
         conn.execute("UPDATE runs SET escalation_status='Ran Myself', escalation_sale_value=42000000 WHERE id=?", (rid,))
     env = {**os.environ, 'DATABASE_URL': '', 'TRACKER_DB_PATH': str(test_app['work'] / 'ratting_tracker.db')}
     subprocess.run([sys.executable, '-c', 'import app; app.init_db()'], cwd=test_app['work'], env=env, check=True, capture_output=True)
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         assert client.get(f'/api/run/{rid}').json()['run']['escalation_sale_value'] == 42000000
 
 
 def test_end_session_retries_ess_matching_with_character_key(test_app):
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         _, sid = completed_run(client)
         with sqlite3.connect(test_app['work'] / 'ratting_tracker.db') as conn:
-            conn.execute('INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)',
+            conn.execute('INSERT INTO ess_events(user_id,entry_id,character_id,date,amount) VALUES(1,?,?,?,?)',
                          (987, 90000001, (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(), 6000000))
         assert client.post('/api/session/end', json={}).status_code == 200
         history = boot(client, '/history')['history']
@@ -74,14 +74,14 @@ def test_end_session_retries_ess_matching_with_character_key(test_app):
 
 
 def test_session_cannot_end_while_site_is_active(test_app):
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         assert client.post('/api/run/start', json={'anomaly': 'Angel Hub', 'participants': [90000001]}).status_code == 200
         assert client.post('/api/session/end', json={}).status_code == 409
         assert client.get('/api/dashboard').json()['session'] is not None
 
 
 def test_today_site_count_includes_more_than_recent_twelve(test_app):
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         for _ in range(13):
             completed_run(client)
         data = client.get('/api/dashboard').json()
@@ -90,7 +90,7 @@ def test_today_site_count_includes_more_than_recent_twelve(test_app):
 
 
 def test_future_sessions_excluded_from_performance(test_app):
-    with httpx.Client(base_url=test_app['base_url'], trust_env=False) as client:
+    with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
         _, sid = completed_run(client)
         assert client.post('/api/session/end', json={}).status_code == 200
         with sqlite3.connect(test_app['work'] / 'ratting_tracker.db') as conn:

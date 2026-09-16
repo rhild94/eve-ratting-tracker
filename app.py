@@ -9,13 +9,14 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
-from fastapi import FastAPI,Request,Form
+from fastapi import FastAPI,Request,Form,HTTPException
+from accounts import Accounts,account_context,user_id,migrate
 from fastapi.responses import HTMLResponse,RedirectResponse,JSONResponse,Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE_DIR=Path(__file__).resolve().parent
-APP_VERSION="9.2.0"
+APP_VERSION="10.0.0"
 load_dotenv(BASE_DIR/".env")
 CLIENT_ID=os.getenv("EVE_CLIENT_ID","").strip()
 CLIENT_SECRET=os.getenv("EVE_CLIENT_SECRET","").strip()
@@ -74,8 +75,7 @@ DB.parent.mkdir(parents=True,exist_ok=True)
 DB_PROCESS_LOCK=threading.RLock()
 DATABASE_URL=os.getenv("DATABASE_URL","").strip()
 USE_POSTGRES=bool(DATABASE_URL)
-APP_ACCESS_KEY=os.getenv("APP_ACCESS_KEY","").strip()
-ACCESS_COOKIE_VALUE=hashlib.sha256(("eve-ratting-tracker:"+APP_ACCESS_KEY).encode()).hexdigest() if APP_ACCESS_KEY else ""
+
 
 class CompatCursor:
     def __init__(self,cur,lastrowid=None): self.cur=cur; self.lastrowid=lastrowid
@@ -100,7 +100,10 @@ class LockedDB:
                 self.conn=PostgresConn(self.raw)
             else:
                 self.raw=sqlite3.connect(DB,timeout=30);self.raw.row_factory=sqlite3.Row
-                self.raw.execute("PRAGMA busy_timeout=5000");self.conn=self.raw
+                self.raw.execute("PRAGMA busy_timeout=5000")
+                self.raw.execute("PRAGMA foreign_keys=ON")
+                self.raw.execute("BEGIN IMMEDIATE")
+                self.conn=self.raw
             self.conn.__enter__();return self.conn
         except Exception:
             DB_PROCESS_LOCK.release();raise
@@ -189,29 +192,19 @@ def init_db():
             ensure_col(c,"runs",d if USE_POSTGRES else d.replace("BIGINT","INTEGER").replace("DOUBLE PRECISION","REAL"))
         for d in ["cache_system_name TEXT","cache_ship_name TEXT","last_esi_sync TEXT","character_role TEXT DEFAULT 'alt'","connected INTEGER DEFAULT 1"]:
             ensure_col(c,"characters",d)
-        # One-time database cleanup for the retired feature. Remove this block after the production migration runs.
-        c.execute("DROP TABLE IF EXISTS fits")
-        if col_exists(c,"runs","fit_selection_json"):
-            c.execute("ALTER TABLE runs DROP COLUMN fit_selection_json")
-        # Preserve both realized escalation outcomes; pending and expired values are not income.
-        c.execute("UPDATE runs SET escalation_sale_value=0 WHERE COALESCE(escalation_status,'') NOT IN ('Sold','Ran Myself') AND COALESCE(escalation_sale_value,0)<>0")
+        migrate(c,USE_POSTGRES,ensure_col)
 init_db()
 
-@app.middleware("http")
-async def access_gate(request:Request,call_next):
-    if not APP_ACCESS_KEY or request.url.path in {"/access","/health"} or request.url.path.startswith("/static/") or request.url.path.startswith("/art/"):
-        return await call_next(request)
-    if secrets.compare_digest(request.cookies.get("tracker_access",""),ACCESS_COOKIE_VALUE):
-        return await call_next(request)
-    return HTMLResponse("""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVE Ratting Tracker</title></head><body style="font-family:system-ui;background:#08111d;color:#e7edf7;display:grid;place-items:center;min-height:100vh"><form method="post" action="/access" style="width:min(420px,90vw);padding:28px;border:1px solid #27415c;border-radius:12px;background:#0d1928"><h2>EVE Ratting Tracker</h2><p>Enter the private access key.</p><input type="password" name="key" autofocus style="box-sizing:border-box;width:100%;padding:12px;margin:12px 0;background:#07111c;color:white;border:1px solid #34506e;border-radius:7px"><button style="padding:10px 16px">Open tracker</button></form></body></html>""",401)
+accounts=Accounts(db,CLIENT_ID,CLIENT_SECRET,CALLBACK_URL,SCOPES)
+app.middleware("http")(accounts.middleware)
 
-@app.post("/access")
-async def access_login(key:str=Form("")):
-    if not APP_ACCESS_KEY or not secrets.compare_digest(key,APP_ACCESS_KEY):
-        return HTMLResponse("Invalid access key.",401)
-    r=RedirectResponse("/",303)
-    r.set_cookie("tracker_access",ACCESS_COOKIE_VALUE,httponly=True,samesite="lax",secure=True,max_age=60*60*24*30)
-    return r
+@app.post("/logout")
+async def logout(request:Request):
+    return await accounts.logout(request)
+
+@app.get("/api/account")
+async def account_info(request:Request):
+    return accounts.bootstrap(request)
 
 @app.get("/health")
 async def health(): return {"ok":True,"version":APP_VERSION}
@@ -243,7 +236,7 @@ def esi_cache_expiry(headers):
     return utcnow()
 
 async def esi_get(path,token=None,params=None):
-    cache_key=path+"?"+json.dumps(params or {},sort_keys=True,separators=(",",":"))
+    cache_key=(f"user:{user_id()}:" if token else "public:")+path+"?"+json.dumps(params or {},sort_keys=True,separators=(",",":"))
     with db() as c:
         cached=c.execute("SELECT payload_json,expires_at FROM esi_cache WHERE cache_key=?",(cache_key,)).fetchone()
     if cached and cached["expires_at"]:
@@ -265,7 +258,7 @@ async def esi_get(path,token=None,params=None):
     return payload
 
 async def row_char(cid):
-    with db() as c:return c.execute("SELECT * FROM characters WHERE character_id=?",(cid,)).fetchone()
+    with db() as c:return c.execute(f"SELECT * FROM characters WHERE characters.user_id={user_id()} AND character_id=?",(cid,)).fetchone()
 async def refresh(row):
     if row["expires_at"]>int(time.time())+60:return row["access_token"]
     data={"grant_type":"refresh_token","refresh_token":row["refresh_token"]}
@@ -275,8 +268,11 @@ async def refresh(row):
     async with httpx.AsyncClient(timeout=30) as cl:
         r=await cl.post(SSO_TOKEN,auth=auth,data=data)
         r.raise_for_status(); t=r.json()
+    claims=await accounts.validate_token(t["access_token"])
+    if claims["sub"]!=f"CHARACTER:EVE:{row['character_id']}" or claims["owner"]!=row["owner_hash"]:
+        raise ValueError("Character ownership changed")
     a=t["access_token"]; rr=t.get("refresh_token",row["refresh_token"]); ex=int(time.time())+int(t.get("expires_in",1200))
-    with db() as c:c.execute("UPDATE characters SET access_token=?,refresh_token=?,expires_at=? WHERE character_id=?",(a,rr,ex,row["character_id"]))
+    with db() as c:c.execute(f"UPDATE characters SET access_token=?,refresh_token=?,expires_at=? WHERE characters.user_id={user_id()} AND character_id=?",(a,rr,ex,row["character_id"]))
     return a
 async def type_name(tid):
     if not tid:return None
@@ -321,37 +317,48 @@ async def resolve_type_names(type_ids):
 
 
 def auto_match_ess(c,cid,eid,dt):
-    cand=c.execute("SELECT id,ended_at FROM sessions WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 8").fetchall()
+    cand=c.execute(f"SELECT id,ended_at FROM sessions WHERE sessions.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 8").fetchall()
     p=[]
     for s in cand:
         x=(dt-parse_iso(s["ended_at"])).total_seconds()
         if 0<=x<=14400:p.append((x,s["id"]))
-    if len(p)==1:c.execute("UPDATE ess_events SET session_id=?,match_status='auto' WHERE character_id=? AND entry_id=?",(p[0][1],cid,eid))
+    if len(p)==1:c.execute(f"UPDATE ess_events SET session_id=?,match_status='auto' WHERE ess_events.user_id={user_id()} AND character_id=? AND entry_id=?",(p[0][1],cid,eid))
 
 async def sync_character(cid):
     row=await row_char(cid)
-    if not row:return
+    if not row:raise HTTPException(404,"Character not found")
     tok=await refresh(row)
     skills=await esi_get(f"/characters/{cid}/skills/",tok)
     queue=await esi_get(f"/characters/{cid}/skillqueue/",tok)
     journal=await esi_get(f"/characters/{cid}/wallet/journal/",tok)
-    cache_system=None; cache_ship=None
+    cache_system=None; cache_ship=None; cache_security=None; affiliation=None; location_updated=None
     try:
         loc=await esi_get(f"/characters/{cid}/location/",tok)
-        cache_system=await sys_name(loc.get("solar_system_id"))
+        system=await esi_get(f"/universe/systems/{int(loc['solar_system_id'])}/")
+        cache_system=system.get("name")
+        cache_security=system.get("security_status")
+        location_updated=iso()
     except:pass
     try:
         sh=await esi_get(f"/characters/{cid}/ship/",tok)
         cache_ship=await type_name(sh.get("ship_type_id"))
     except:pass
+    try:
+        pub=await esi_get(f"/characters/{cid}/")
+        if pub.get("alliance_id"):
+            affiliation=(await esi_get(f"/alliances/{int(pub['alliance_id'])}/")).get("name")
+        elif pub.get("corporation_id"):
+            affiliation=(await esi_get(f"/corporations/{int(pub['corporation_id'])}/")).get("name")
+    except Exception:pass
     synced=iso()
     with db() as c:
-        c.execute("INSERT INTO skill_snapshots(character_id,captured_at,total_sp,skills_json,queue_json) VALUES(?,?,?,?,?)",(cid,synced,int(skills.get("total_sp",0)),json.dumps(skills.get("skills",[])),json.dumps(queue)))
-        c.execute("UPDATE characters SET cache_system_name=COALESCE(?,cache_system_name),cache_ship_name=COALESCE(?,cache_ship_name),last_esi_sync=? WHERE character_id=?",(cache_system,cache_ship,synced,cid))
+        c.execute("UPDATE characters SET cache_system_name=?,cache_security=?,cache_affiliation=?,location_updated_at=? WHERE character_id=? AND user_id=?",(cache_system,cache_security,affiliation,location_updated,cid,user_id()))
+        c.execute(f"INSERT INTO skill_snapshots(user_id,character_id,captured_at,total_sp,skills_json,queue_json) VALUES({user_id()},?,?,?,?,?)",(cid,synced,int(skills.get("total_sp",0)),json.dumps(skills.get("skills",[])),json.dumps(queue)))
+        c.execute(f"UPDATE characters SET cache_system_name=COALESCE(?,cache_system_name),cache_ship_name=COALESCE(?,cache_ship_name),last_esi_sync=? WHERE characters.user_id={user_id()} AND character_id=?",(cache_system,cache_ship,synced,cid))
         for j in journal:
-            c.execute("INSERT INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(character_id,entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO wallet_entries(entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES(?,?,?,?,?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j)))
+            c.execute(f"INSERT INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES({user_id()},?,?,?,?,?,?,?,?) ON CONFLICT(character_id,entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j))) if USE_POSTGRES else c.execute(f"INSERT OR IGNORE INTO wallet_entries(user_id,entry_id,character_id,date,amount,balance,ref_type,description,raw_json) VALUES({user_id()},?,?,?,?,?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount")),j.get("balance"),j.get("ref_type"),j.get("description"),json.dumps(j)))
             if "ess" in (j.get("ref_type") or "").lower() and money(j.get("amount"))>0:
-                c.execute("INSERT INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?) ON CONFLICT(character_id,entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")))) if USE_POSTGRES else c.execute("INSERT OR IGNORE INTO ess_events(entry_id,character_id,date,amount) VALUES(?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount"))))
+                c.execute(f"INSERT INTO ess_events(user_id,entry_id,character_id,date,amount) VALUES({user_id()},?,?,?,?) ON CONFLICT(character_id,entry_id) DO NOTHING",(j.get("id"),cid,j.get("date"),money(j.get("amount")))) if USE_POSTGRES else c.execute(f"INSERT OR IGNORE INTO ess_events(user_id,entry_id,character_id,date,amount) VALUES({user_id()},?,?,?,?)",(j.get("id"),cid,j.get("date"),money(j.get("amount"))))
                 try:auto_match_ess(c,cid,j.get("id"),parse_iso(j.get("date")))
                 except:pass
 
@@ -366,10 +373,10 @@ async def status(cid):
     return out
 
 def latest(cid):
-    with db() as c:return c.execute("SELECT * FROM skill_snapshots WHERE character_id=? ORDER BY id DESC LIMIT 1",(cid,)).fetchone()
+    with db() as c:return c.execute(f"SELECT * FROM skill_snapshots WHERE skill_snapshots.user_id={user_id()} AND character_id=? ORDER BY id DESC LIMIT 1",(cid,)).fetchone()
 
 async def progression(cid,queue_limit=50):
-    with db() as c:s=c.execute("SELECT * FROM skill_snapshots WHERE character_id=? ORDER BY id DESC LIMIT 2",(cid,)).fetchall()
+    with db() as c:s=c.execute(f"SELECT * FROM skill_snapshots WHERE skill_snapshots.user_id={user_id()} AND character_id=? ORDER BY id DESC LIMIT 2",(cid,)).fetchall()
     if not s:return {"total_sp":0,"queue":[],"changes":[],"captured_at":None,"has_snapshot":False}
     queue_raw=json.loads(s[0]["queue_json"])[:queue_limit]
     changes_raw=[]
@@ -383,16 +390,16 @@ async def progression(cid,queue_limit=50):
     ch=[{"skill":names.get(int(tid),str(tid)),"from":a,"to":b} for tid,a,b in changes_raw]
     return {"total_sp":s[0]["total_sp"],"queue":q,"changes":ch,"captured_at":s[0]["captured_at"],"has_snapshot":True}
 
-def active_session(c):return c.execute("SELECT * FROM sessions WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
+def active_session(c):return c.execute(f"SELECT * FROM sessions WHERE sessions.user_id={user_id()} AND status='active' ORDER BY id DESC LIMIT 1").fetchone()
 def ensure_session(c,st):
     s=active_session(c)
     if s:return s["id"]
-    if USE_POSTGRES:return c.execute("INSERT INTO sessions(started_at,status) VALUES(?,'active') RETURNING id",(st,)).fetchone()["id"]
-    return c.execute("INSERT INTO sessions(started_at,status) VALUES(?,'active')",(st,)).lastrowid
+    if USE_POSTGRES:return c.execute(f"INSERT INTO sessions(user_id,started_at,status) VALUES({user_id()},?,'active') RETURNING id",(st,)).fetchone()["id"]
+    return c.execute(f"INSERT INTO sessions(user_id,started_at,status) VALUES({user_id()},?,'active')",(st,)).lastrowid
 
 def cached_run_context(pids):
     with db() as c:
-        rows=c.execute(f"SELECT character_id,name,cache_system_name,cache_ship_name FROM characters WHERE character_id IN ({','.join('?'*len(pids))})",pids).fetchall() if pids else []
+        rows=c.execute(f"SELECT character_id,name,cache_system_name,cache_ship_name FROM characters WHERE characters.user_id={user_id()} AND character_id IN ({','.join('?'*len(pids))})",pids).fetchall() if pids else []
     systems=[r["cache_system_name"] for r in rows if r["cache_system_name"]]
     system=systems[0] if systems and all(x==systems[0] for x in systems) else (", ".join(sorted(set(systems))) if systems else None)
     ships=[{"character":r["name"],"ship":r["cache_ship_name"]} for r in rows if r["cache_ship_name"]]
@@ -411,9 +418,9 @@ def reconcile_bounties():
     the payout interval for each participating character.
     """
     with db() as c:
-        runs=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY started_at").fetchall()
-        chars=[x["character_id"] for x in c.execute("SELECT character_id FROM characters")]
-        c.execute("UPDATE runs SET combined_bounty=0")
+        runs=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL ORDER BY started_at").fetchall()
+        chars=[x["character_id"] for x in c.execute(f"SELECT character_id FROM characters WHERE characters.user_id={user_id()} ")]
+        c.execute(f"UPDATE runs SET combined_bounty=0 WHERE runs.user_id={user_id()} ")
         latest_tick={}
         allocations={int(r["id"]):0.0 for r in runs}
         parsed_runs=[]
@@ -424,8 +431,8 @@ def reconcile_bounties():
                 continue
 
         for cid in chars:
-            ticks=c.execute("""SELECT date,amount FROM wallet_entries
-                               WHERE character_id=? AND LOWER(COALESCE(ref_type,''))='bounty_prizes' AND amount>0
+            ticks=c.execute(f"""SELECT date,amount FROM wallet_entries
+                               WHERE wallet_entries.user_id={user_id()} AND character_id=? AND LOWER(COALESCE(ref_type,''))='bounty_prizes' AND amount>0
                                ORDER BY date""",(cid,)).fetchall()
             prev_dt=None
             for tick in ticks:
@@ -454,13 +461,13 @@ def reconcile_bounties():
         now=utcnow()
         for r,rs,re,pids in parsed_runs:
             rid=int(r["id"])
-            c.execute("UPDATE runs SET combined_bounty=? WHERE id=?",(allocations.get(rid,0.0),rid))
+            c.execute(f"UPDATE runs SET combined_bounty=? WHERE runs.user_id={user_id()} AND id=?",(allocations.get(rid,0.0),rid))
             # A site remains visibly pending until every participant has a
             # bounty tick at/after site completion, or enough time has passed
             # that no additional tick should normally be expected.
             complete_ticks=bool(pids) and all(latest_tick.get(cid) and latest_tick[cid]>=re for cid in pids)
             aged=(now-re).total_seconds()>=1800
-            c.execute("UPDATE runs SET esi_synced_at=? WHERE id=?",
+            c.execute(f"UPDATE runs SET esi_synced_at=? WHERE runs.user_id={user_id()} AND id=?",
                       (iso(now) if (complete_ticks or aged) else None,rid))
 
 
@@ -489,9 +496,9 @@ def session_performance(days=30):
     now=utcnow()
     cutoff=now-timedelta(days=days)
     with db() as c:
-        sessions=c.execute("SELECT * FROM sessions WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
-        runs=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
-        ess=c.execute("SELECT * FROM ess_events WHERE session_id IS NOT NULL").fetchall()
+        sessions=c.execute(f"SELECT * FROM sessions WHERE sessions.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
+        runs=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL ORDER BY ended_at").fetchall()
+        ess=c.execute(f"SELECT * FROM ess_events WHERE ess_events.user_id={user_id()} AND session_id IS NOT NULL").fetchall()
     rows=[]
     total_income=total_ratting=total_seconds=0.0
     best=None
@@ -532,12 +539,19 @@ def session_performance(days=30):
             "avg_ratting_isk_hr":avg_ratting_hr,"avg_total_isk_hr":avg_total_hr,
             "sessions":len(rows),"sites":total_sites,"total_seconds":total_seconds,"best":best}
 
+def main_hud():
+    with db() as c:
+        row=c.execute("SELECT ch.name,ch.cache_system_name,ch.cache_security,ch.cache_affiliation,ch.location_updated_at FROM characters ch JOIN users u ON u.id=ch.user_id AND u.primary_character_id=ch.character_id WHERE ch.user_id=? AND ch.connected=1",(user_id(),)).fetchone()
+    if not row:return {"system_name":None,"security_class":None,"affiliation":None}
+    sec=row["cache_security"]
+    return {"character_name":row["name"],"system_name":row["cache_system_name"],"security":sec,"security_class":("High Sec" if sec>=0.45 else "Low Sec" if sec>0 else "Null Sec") if sec is not None else None,"affiliation":row["cache_affiliation"],"updated_at":row["location_updated_at"]}
+
 async def dashboard_payload():
     with db() as c:
-        chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE COALESCE(connected,1)=1 ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
-        ar=c.execute("SELECT * FROM runs WHERE status='active' ORDER BY id DESC LIMIT 1").fetchone()
-        recent=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY id DESC LIMIT 12").fetchall()
-        ses=active_session(c); sr=c.execute("SELECT * FROM runs WHERE session_id=? ORDER BY id",(ses["id"],)).fetchall() if ses else []
+        chars=c.execute(f"SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE characters.user_id={user_id()} AND COALESCE(connected,1)=1 ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
+        ar=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='active' ORDER BY id DESC LIMIT 1").fetchone()
+        recent=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='complete' ORDER BY id DESC LIMIT 12").fetchall()
+        ses=active_session(c); sr=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND session_id=? ORDER BY id",(ses["id"],)).fetchall() if ses else []
     characters=[{"id":x["character_id"],"name":x["name"],"role":x["character_role"] or "alt","portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=64"} for x in chars]
     today=utcnow().date()
     stats={"today_isk":0,"today_sites":0,"today_seconds":0,"today_ess":0}
@@ -546,10 +560,10 @@ async def dashboard_payload():
     # connected character. They intentionally do not depend on tracker runs,
     # participant attribution, sessions, or ESS auto-matching.
     with db() as c:
-        wallet_today=c.execute("""SELECT w.character_id,w.date,w.amount,w.ref_type
+        wallet_today=c.execute(f"""SELECT w.character_id,w.date,w.amount,w.ref_type
                                   FROM wallet_entries w
                                   INNER JOIN characters ch ON ch.character_id=w.character_id
-                                  WHERE w.amount>0""").fetchall()
+                                  WHERE w.user_id={user_id()} AND w.amount>0""").fetchall()
     for w in wallet_today:
         try:
             if parse_iso(w["date"]).date()!=today:continue
@@ -566,7 +580,7 @@ async def dashboard_payload():
     # inflate the measured ratting efficiency.
     tracked_today_bounty=0.0
     with db() as c:
-        completed=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL").fetchall()
+        completed=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL").fetchall()
     for r in completed:
         if r["ended_at"] and parse_iso(r["ended_at"]).date()==today:
             e=enrich(r)
@@ -579,136 +593,112 @@ async def dashboard_payload():
         done=[r for r in sr if r["status"]=="complete"]
         si={"id":ses["id"],"sites":len(done),"bounty":sum(money(r["combined_bounty"]) for r in done)}
     with db() as c:
-        pending_esi=c.execute("SELECT COUNT(*) AS n FROM runs WHERE status='complete' AND esi_synced_at IS NULL").fetchone()["n"]
-        last_sync=c.execute("SELECT MAX(last_esi_sync) AS t FROM characters WHERE COALESCE(connected,1)=1").fetchone()["t"]
-        sync_state=c.execute("SELECT * FROM esi_sync_state WHERE id=1").fetchone()
+        pending_esi=c.execute(f"SELECT COUNT(*) AS n FROM runs WHERE runs.user_id={user_id()} AND status='complete' AND esi_synced_at IS NULL").fetchone()["n"]
+        last_sync=c.execute(f"SELECT MAX(last_esi_sync) AS t FROM characters WHERE characters.user_id={user_id()} AND COALESCE(connected,1)=1").fetchone()["t"]
+        sync_state=c.execute(f"SELECT * FROM account_sync_state WHERE user_id={user_id()}").fetchone()
     esi_state={"pending_runs":pending_esi,"last_sync":last_sync,"interval_minutes":AUTO_SYNC_INTERVAL_SECONDS//60,"configured":bool(CLIENT_ID),"connected_characters":len(characters)}
     if sync_state:esi_state.update({k:sync_state[k] for k in ["last_attempt","last_success","last_error","next_check"]})
-    return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":esi_state}
+    return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":esi_state,"hud":main_hud()}
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
     payload=await dashboard_payload()
     boot={"page":"tracker","data":payload,"config_ok":bool(CLIENT_ID),"version":APP_VERSION}
-    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Tracker"})
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":{**boot,"account":accounts.bootstrap(request)},"title":"Tracker"})
 
 @app.get("/dashboard",response_class=HTMLResponse)
 async def dashboard_page(request:Request,days:int=30):
     perf=session_performance(days)
     boot={"page":"dashboard","perf":perf,"version":APP_VERSION}
-    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Dashboard"})
-
-@app.get("/setup",response_class=HTMLResponse)
-async def setup_page(request:Request):
-    return templates.TemplateResponse(request=request,name="setup.html",context={"configured":bool(CLIENT_ID),"version":APP_VERSION})
-
-@app.post("/setup")
-async def setup_save(client_id:str=Form("")):
-    global CLIENT_ID
-    cid=client_id.strip()
-    if not cid:return HTMLResponse("Client ID is required.",400)
-    env_path=BASE_DIR/".env"
-    existing={}
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k,v=line.split("=",1);existing[k.strip()]=v.strip()
-    existing["EVE_CLIENT_ID"]=cid
-    existing.setdefault("EVE_CALLBACK_URL",CALLBACK_URL)
-    env_path.write_text("\n".join(f"{k}={v}" for k,v in existing.items())+"\n",encoding="utf-8")
-    CLIENT_ID=cid
-    return RedirectResponse("/",303)
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":{**boot,"account":accounts.bootstrap(request)},"title":"Dashboard"})
 
 @app.post("/api/character/{cid}/main")
 async def api_set_main_character(cid:int):
     with db() as c:
-        if not c.execute("SELECT 1 FROM characters WHERE character_id=? AND COALESCE(connected,1)=1",(cid,)).fetchone():
+        if not c.execute(f"SELECT 1 FROM characters WHERE characters.user_id={user_id()} AND character_id=? AND COALESCE(connected,1)=1",(cid,)).fetchone():
             return JSONResponse({"ok":False,"error":"Connected character not found."},404)
-        c.execute("UPDATE characters SET character_role='alt' WHERE COALESCE(connected,1)=1")
-        c.execute("UPDATE characters SET character_role='main' WHERE character_id=?",(cid,))
+        c.execute(f"UPDATE characters SET character_role='alt' WHERE characters.user_id={user_id()} AND COALESCE(connected,1)=1")
+        c.execute(f"UPDATE characters SET character_role='main' WHERE characters.user_id={user_id()} AND character_id=?",(cid,))
+        c.execute("UPDATE users SET primary_character_id=? WHERE id=?",(cid,user_id()))
     return JSONResponse({"ok":True})
 
 @app.delete("/api/character/{cid}")
 async def api_remove_character(cid:int):
     """Disconnect a character while preserving every historical record."""
     with db() as c:
-        row=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE character_id=? AND COALESCE(connected,1)=1",(cid,)).fetchone()
+        row=c.execute(f"SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE characters.user_id={user_id()} AND character_id=? AND COALESCE(connected,1)=1",(cid,)).fetchone()
         if not row:
             return JSONResponse({"ok":False,"error":"Connected character not found."},404)
-        for active in c.execute("SELECT id,participants_json FROM runs WHERE status='active'").fetchall():
+        for active in c.execute(f"SELECT id,participants_json FROM runs WHERE runs.user_id={user_id()} AND status='active'").fetchall():
             try:pids=[int(x) for x in json.loads(active["participants_json"] or "[]")]
             except Exception:pids=[]
             if cid in pids:
                 return JSONResponse({"ok":False,"error":"Complete or cancel the active site before removing this character."},409)
-        others=c.execute("SELECT character_id,name FROM characters WHERE character_id<>? AND COALESCE(connected,1)=1 ORDER BY connected_at",(cid,)).fetchall()
+        others=c.execute(f"SELECT character_id,name FROM characters WHERE characters.user_id={user_id()} AND character_id<>? AND COALESCE(connected,1)=1 ORDER BY connected_at",(cid,)).fetchall()
         if row["character_role"]=="main" and others:
             return JSONResponse({"ok":False,"error":"Set another connected character as Main before removing the current Main character.","requires_new_main":True,"alternatives":[dict(x) for x in others]},409)
-        c.execute("UPDATE characters SET connected=0,character_role='alt',access_token='',refresh_token='',expires_at=0 WHERE character_id=?",(cid,))
+        c.execute(f"UPDATE characters SET connected=0,character_role='alt',access_token='',refresh_token='',expires_at=0 WHERE characters.user_id={user_id()} AND character_id=?",(cid,))
     return JSONResponse({"ok":True,"character_id":cid})
 
 @app.get("/api/dashboard")
 async def api_dashboard(): return JSONResponse(await dashboard_payload())
 
 @app.get("/login")
-async def login():
-    if not CLIENT_ID:return HTMLResponse("EVE connection is not configured yet. The local tracker is fully available; add a Client ID in Settings when you want to connect ESI.",503)
-    st=secrets.token_urlsafe(32)
-    verifier=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
-    challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-    with db() as c:c.execute("INSERT INTO oauth_states(state,created_at,code_verifier) VALUES(?,?,?)",(st,int(time.time()),verifier))
-    return RedirectResponse(SSO_AUTHORIZE+"?"+urlencode({"response_type":"code","redirect_uri":CALLBACK_URL,"client_id":CLIENT_ID,"scope":" ".join(SCOPES),"state":st,"code_challenge":challenge,"code_challenge_method":"S256"}))
+async def login(request:Request):
+    return await accounts.begin(request)
+
+@app.post("/connect")
+async def connect_character(request:Request):
+    return await accounts.begin(request,"connect")
+
 @app.get("/callback")
-async def callback(code:str,state:str):
-    with db() as c:
-        row=c.execute("SELECT * FROM oauth_states WHERE state=?",(state,)).fetchone()
-        if not row:return HTMLResponse("Invalid OAuth state",400)
-        verifier=row["code_verifier"]
-        c.execute("DELETE FROM oauth_states WHERE state=?",(state,))
-    data={"grant_type":"authorization_code","code":code,"redirect_uri":CALLBACK_URL}
-    auth=None
-    if verifier:
-        data.update({"client_id":CLIENT_ID,"code_verifier":verifier})
-    elif CLIENT_SECRET:
-        auth=(CLIENT_ID,CLIENT_SECRET)
-    async with httpx.AsyncClient(timeout=30) as cl:
-        r=await cl.post(SSO_TOKEN,auth=auth,data=data);r.raise_for_status();t=r.json()
-    cid=charid(t["access_token"]);pub=await esi_get(f"/characters/{cid}/")
-    with db() as c:
-        has_main=c.execute("SELECT 1 FROM characters WHERE character_role='main' AND COALESCE(connected,1)=1 LIMIT 1").fetchone()
-        role="alt" if has_main else "main"
-        c.execute("""INSERT INTO characters(character_id,name,access_token,refresh_token,expires_at,connected_at,character_role,connected) VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(character_id) DO UPDATE SET name=excluded.name,access_token=excluded.access_token,refresh_token=excluded.refresh_token,expires_at=excluded.expires_at,connected_at=excluded.connected_at,character_role=excluded.character_role,connected=1""",(cid,pub.get("name",str(cid)),t["access_token"],t["refresh_token"],int(time.time())+int(t.get("expires_in",1200)),iso(),role))
-    await sync_character(cid)
-    return RedirectResponse("/",302)
+async def callback(request:Request,code:str="",state:str=""):
+    response=await accounts.callback(request,code,state)
+    context=account_context.set(int(request.state.authenticated_user))
+    try:
+        await sync_character(request.state.authenticated_character)
+    except Exception:
+        with db() as c:
+            c.execute("UPDATE account_sync_state SET last_error=? WHERE user_id=?",("Initial ESI sync unavailable. Try Sync ESI again.",user_id()))
+    finally:
+        account_context.reset(context)
+    return response
 
 async def run_esi_sync(source="manual"):
     attempt=iso()
     next_check=iso(utcnow()+timedelta(seconds=AUTO_SYNC_INTERVAL_SECONDS))
     with db() as c:
-        c.execute("UPDATE esi_sync_state SET last_attempt=?,next_check=? WHERE id=1",(attempt,next_check))
-        ids=[x["character_id"] for x in c.execute("SELECT character_id FROM characters WHERE COALESCE(connected,1)=1")]
+        c.execute(f"UPDATE account_sync_state SET last_attempt=?,next_check=? WHERE user_id={user_id()}",(attempt,next_check))
+        ids=[x["character_id"] for x in c.execute(f"SELECT character_id FROM characters WHERE characters.user_id={user_id()} AND COALESCE(connected,1)=1")]
     errors=[]
     for cid in ids:
         try:await sync_character(cid)
-        except Exception as e:errors.append(f"{cid}: {type(e).__name__}: {e}")
+        except Exception:errors.append("Character sync failed; reconnect the character if this persists.")
     synced=iso()
     if not errors:
         try:reconcile_bounties()
-        except Exception as e:errors.append(f"bounty reconciliation: {type(e).__name__}: {e}")
+        except Exception:errors.append("Bounty reconciliation failed.")
     with db() as c:
         if errors:
-            c.execute("UPDATE esi_sync_state SET last_error=? WHERE id=1",("; ".join(errors)[:1000],))
+            c.execute(f"UPDATE account_sync_state SET last_error=? WHERE user_id={user_id()}",("; ".join(errors)[:1000],))
         else:
-            c.execute("UPDATE esi_sync_state SET last_success=?,last_error=NULL WHERE id=1",(synced,))
+            c.execute(f"UPDATE account_sync_state SET last_success=?,last_error=NULL WHERE user_id={user_id()}",(synced,))
     return {"ok":not errors,"errors":errors,"source":source}
 
 async def auto_sync_loop():
     await asyncio.sleep(AUTO_SYNC_INITIAL_DELAY_SECONDS)
     while True:
-        try:await run_esi_sync("auto")
-        except Exception as e:
-            with db() as c:
-                c.execute("UPDATE esi_sync_state SET last_attempt=?,last_error=?,next_check=? WHERE id=1",
-                          (iso(),f"{type(e).__name__}: {e}"[:1000],iso(utcnow()+timedelta(seconds=AUTO_SYNC_INTERVAL_SECONDS))))
+        with db() as c:
+            ids=[int(r["id"]) for r in c.execute("SELECT id FROM users")]
+        for uid in ids:
+            context=account_context.set(uid)
+            try:
+                await run_esi_sync("auto")
+            except Exception:
+                with db() as c:
+                    c.execute("UPDATE account_sync_state SET last_error=? WHERE user_id=?",("ESI sync failed; reconnect your character if this persists.",uid))
+            finally:
+                account_context.reset(context)
         await asyncio.sleep(AUTO_SYNC_INTERVAL_SECONDS)
 
 @app.on_event("startup")
@@ -740,39 +730,43 @@ async def api_start_run(request:Request):
             delta=abs((utcnow()-candidate).total_seconds())
             if delta<=180: st=iso(candidate)
         except: pass
+    with db() as c:
+        valid={r["character_id"] for r in c.execute("SELECT character_id FROM characters WHERE user_id=? AND COALESCE(connected,1)=1",(user_id(),))}
+    if any(cid not in valid for cid in pids):
+        return JSONResponse({"ok":False,"error":"Participant not found."},404)
     system,ships=cached_run_context(pids)
     with db() as c:
-        if c.execute("SELECT 1 FROM runs WHERE status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
+        if c.execute(f"SELECT 1 FROM runs WHERE runs.user_id={user_id()} AND status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
         sid=ensure_session(c,st)
-        rid=(c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL) RETURNING id",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).fetchone()["id"] if USE_POSTGRES else c.execute("INSERT INTO runs(anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES(?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid)
-        run=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
+        rid=(c.execute(f"INSERT INTO runs(user_id,anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES({user_id()},?,?,?,?,?,'active',?,?,?,NULL) RETURNING id",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).fetchone()["id"] if USE_POSTGRES else c.execute(f"INSERT INTO runs(user_id,anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES({user_id()},?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid)
+        run=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
     return JSONResponse({"ok":True,"run":enrich(run),"session_id":sid})
 
 
 @app.post("/api/run/{rid}/pause")
 async def api_toggle_pause(rid:int):
     with db() as c:
-        r=c.execute("SELECT * FROM runs WHERE id=? AND status='active'",(rid,)).fetchone()
+        r=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=? AND status='active'",(rid,)).fetchone()
         if not r:return JSONResponse({"ok":False,"error":"Active run not found."},404)
         if r["paused_at"]:
             added=max(0,(utcnow()-parse_iso(r["paused_at"])).total_seconds())
-            c.execute("UPDATE runs SET paused_at=NULL,paused_seconds=COALESCE(paused_seconds,0)+? WHERE id=?",(added,rid))
+            c.execute(f"UPDATE runs SET paused_at=NULL,paused_seconds=COALESCE(paused_seconds,0)+? WHERE runs.user_id={user_id()} AND id=?",(added,rid))
         else:
-            c.execute("UPDATE runs SET paused_at=? WHERE id=?",(iso(),rid))
-        updated=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
+            c.execute(f"UPDATE runs SET paused_at=? WHERE runs.user_id={user_id()} AND id=?",(iso(),rid))
+        updated=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
     return JSONResponse({"ok":True,"run":enrich(updated)})
 
 @app.post("/api/run/{rid}/complete")
 async def api_complete_run(rid:int):
-    with db() as c:r=c.execute("SELECT * FROM runs WHERE id=? AND status='active'",(rid,)).fetchone()
+    with db() as c:r=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=? AND status='active'",(rid,)).fetchone()
     if not r:return JSONResponse({"ok":False,"error":"Active run not found."},404)
     end=utcnow()
     with db() as c:
         if r["paused_at"]:
             added=max(0,(end-parse_iso(r["paused_at"])).total_seconds())
-            c.execute("UPDATE runs SET paused_at=NULL,paused_seconds=COALESCE(paused_seconds,0)+? WHERE id=?",(added,rid))
-        c.execute("UPDATE runs SET ended_at=?,status='complete' WHERE id=?",(iso(end),rid))
-        done=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
+            c.execute(f"UPDATE runs SET paused_at=NULL,paused_seconds=COALESCE(paused_seconds,0)+? WHERE runs.user_id={user_id()} AND id=?",(added,rid))
+        c.execute(f"UPDATE runs SET ended_at=?,status='complete' WHERE runs.user_id={user_id()} AND id=?",(iso(end),rid))
+        done=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
     # Local-first: no ESI/wallet work here. Sync ESI will reconcile later.
     return JSONResponse({"ok":True,"run":enrich(done),"escalations":ESCALATIONS.get(done["anomaly"],[]),"bounty_pending":True})
 
@@ -795,22 +789,22 @@ async def api_save_bonus(rid:int,request:Request):
         for _ in range(3):
             try:
                 with db() as c:
-                    exists=c.execute("SELECT id FROM runs WHERE id=?",(rid,)).fetchone()
+                    exists=c.execute(f"SELECT id FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
                     if not exists:return JSONResponse({"ok":False,"error":"Run not found."},404)
-                    c.execute("""UPDATE runs SET escalation_name=?,escalation_status=?,escalation_sale_value=?,rare_spawn_type=?,rare_spawn_name=?,rare_spawn_value=?,notes=? WHERE id=?""",values)
+                    c.execute(f"""UPDATE runs SET escalation_name=?,escalation_status=?,escalation_sale_value=?,rare_spawn_type=?,rare_spawn_name=?,rare_spawn_value=?,notes=? WHERE runs.user_id={user_id()} AND id=?""",values)
                 return JSONResponse({"ok":True})
             except (sqlite3.OperationalError,psycopg.OperationalError) as e:
                 last_error=e
                 if USE_POSTGRES or "locked" not in str(e).lower():raise
                 time.sleep(.25)
-        return JSONResponse({"ok":False,"error":f"Database was busy: {last_error}"},503)
+        return JSONResponse({"ok":False,"error":"Database was busy. Please try again."},503)
     except Exception as e:
-        return JSONResponse({"ok":False,"error":f"{type(e).__name__}: {e}"},500)
+        return JSONResponse({"ok":False,"error":"Unable to save the run."},500)
 
 
 @app.get("/api/run/{rid}")
 async def api_get_run(rid:int):
-    with db() as c:r=c.execute("SELECT * FROM runs WHERE id=?",(rid,)).fetchone()
+    with db() as c:r=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
     if not r:return JSONResponse({"ok":False,"error":"Run not found."},404)
     return JSONResponse({"ok":True,"run":enrich(r),"escalations":ESCALATIONS.get(r["anomaly"],[])})
 
@@ -819,9 +813,9 @@ async def api_delete_run(rid:int):
     for attempt in range(3):
         try:
             with db() as c:
-                r=c.execute("SELECT id FROM runs WHERE id=?",(rid,)).fetchone()
+                r=c.execute(f"SELECT id FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
                 if not r:return JSONResponse({"ok":False,"error":"Run not found."},404)
-                c.execute("DELETE FROM runs WHERE id=?",(rid,))
+                c.execute(f"DELETE FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,))
             return JSONResponse({"ok":True})
         except (sqlite3.OperationalError,psycopg.OperationalError) as e:
             if USE_POSTGRES or "locked" not in str(e).lower():raise
@@ -834,19 +828,19 @@ async def api_end_session(request:Request):
     with db() as c:
         s=active_session(c)
         if not s:return JSONResponse({"ok":False,"error":"No active session."},404)
-        if c.execute("SELECT 1 FROM runs WHERE session_id=? AND status='active'",(s["id"],)).fetchone():
+        if c.execute(f"SELECT 1 FROM runs WHERE runs.user_id={user_id()} AND session_id=? AND status='active'",(s["id"],)).fetchone():
             return JSONResponse({"ok":False,"error":"Complete the active site before ending this session."},409)
-        last=c.execute("SELECT ended_at FROM runs WHERE session_id=? AND status='complete' ORDER BY ended_at DESC LIMIT 1",(s["id"],)).fetchone()
+        last=c.execute(f"SELECT ended_at FROM runs WHERE runs.user_id={user_id()} AND session_id=? AND status='complete' ORDER BY ended_at DESC LIMIT 1",(s["id"],)).fetchone()
         end=last["ended_at"] if last else iso()
-        c.execute("UPDATE sessions SET ended_at=?,status='complete',loot_value=?,salvage_value=?,notes=? WHERE id=?",(end,max(0,money(b.get("loot_value"))),max(0,money(b.get("salvage_value"))),(b.get("notes") or "").strip(),s["id"]))
-        for e in c.execute("SELECT * FROM ess_events WHERE session_id IS NULL"):
+        c.execute(f"UPDATE sessions SET ended_at=?,status='complete',loot_value=?,salvage_value=?,notes=? WHERE sessions.user_id={user_id()} AND id=?",(end,max(0,money(b.get("loot_value"))),max(0,money(b.get("salvage_value"))),(b.get("notes") or "").strip(),s["id"]))
+        for e in c.execute(f"SELECT * FROM ess_events WHERE ess_events.user_id={user_id()} AND session_id IS NULL"):
             try:auto_match_ess(c,e["character_id"],e["entry_id"],parse_iso(e["date"]))
             except:pass
     return JSONResponse({"ok":True})
 
 @app.get("/api/session/{sid}")
 async def api_get_session(sid:int):
-    with db() as c:s=c.execute("SELECT * FROM sessions WHERE id=?",(sid,)).fetchone()
+    with db() as c:s=c.execute(f"SELECT * FROM sessions WHERE sessions.user_id={user_id()} AND id=?",(sid,)).fetchone()
     if not s:return JSONResponse({"ok":False,"error":"Session not found."},404)
     return JSONResponse({"ok":True,"session":dict(s)})
 
@@ -854,9 +848,9 @@ async def api_get_session(sid:int):
 async def api_update_session(sid:int,request:Request):
     b=await request.json()
     with db() as c:
-        if not c.execute("SELECT id FROM sessions WHERE id=?",(sid,)).fetchone():
+        if not c.execute(f"SELECT id FROM sessions WHERE sessions.user_id={user_id()} AND id=?",(sid,)).fetchone():
             return JSONResponse({"ok":False,"error":"Session not found."},404)
-        c.execute("UPDATE sessions SET loot_value=?,salvage_value=?,notes=? WHERE id=?",
+        c.execute(f"UPDATE sessions SET loot_value=?,salvage_value=?,notes=? WHERE sessions.user_id={user_id()} AND id=?",
                   (max(0,money(b.get("loot_value"))),max(0,money(b.get("salvage_value"))),(b.get("notes") or "").strip(),sid))
     return JSONResponse({"ok":True})
 
@@ -865,9 +859,11 @@ async def api_delete_session(sid:int):
     for attempt in range(3):
         try:
             with db() as c:
-                c.execute("UPDATE ess_events SET session_id=NULL,match_status='unassigned' WHERE session_id=?",(sid,))
-                c.execute("DELETE FROM runs WHERE session_id=?",(sid,))
-                c.execute("DELETE FROM sessions WHERE id=?",(sid,))
+                if not c.execute("SELECT 1 FROM sessions WHERE id=? AND user_id=?",(sid,user_id())).fetchone():
+                    return JSONResponse({"ok":False,"error":"Session not found."},404)
+                c.execute(f"UPDATE ess_events SET session_id=NULL,match_status='unassigned' WHERE ess_events.user_id={user_id()} AND session_id=?",(sid,))
+                c.execute(f"DELETE FROM runs WHERE runs.user_id={user_id()} AND session_id=?",(sid,))
+                c.execute(f"DELETE FROM sessions WHERE sessions.user_id={user_id()} AND id=?",(sid,))
             return JSONResponse({"ok":True})
         except (sqlite3.OperationalError,psycopg.OperationalError) as e:
             if USE_POSTGRES or "locked" not in str(e).lower():raise
@@ -878,7 +874,7 @@ def progression_site_performance(days=30):
     days=30 if days==30 else 7 if days==7 else 30
     now=utcnow();cutoff=now-timedelta(days=days)
     with db() as c:
-        rows=c.execute("SELECT * FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC").fetchall()
+        rows=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC").fetchall()
     groups={}
     for r in rows:
         try:end=parse_iso(r["ended_at"])
@@ -897,7 +893,7 @@ def progression_luck_stats(days=30):
     days=30 if days==30 else 7 if days==7 else 30
     now=utcnow();cutoff=now-timedelta(days=days)
     with db() as c:
-        rows=c.execute("SELECT anomaly,ended_at,escalation_name,rare_spawn_type,rare_spawn_value FROM runs WHERE status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC").fetchall()
+        rows=c.execute(f"SELECT anomaly,ended_at,escalation_name,rare_spawn_type,rare_spawn_value FROM runs WHERE runs.user_id={user_id()} AND status='complete' AND ended_at IS NOT NULL ORDER BY ended_at DESC").fetchall()
     active=[]
     for r in rows:
         try:end=parse_iso(r["ended_at"])
@@ -916,7 +912,7 @@ def progression_luck_stats(days=30):
 @app.get("/progression",response_class=HTMLResponse)
 async def progression_page(request:Request,days:int=30):
     days=30 if days==30 else 7 if days==7 else 30
-    with db() as c:chars=c.execute("SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE COALESCE(connected,1)=1 ORDER BY connected_at").fetchall()
+    with db() as c:chars=c.execute(f"SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE characters.user_id={user_id()} AND COALESCE(connected,1)=1 ORDER BY connected_at").fetchall()
     out=[]
     for x in chars:
         try:
@@ -925,17 +921,17 @@ async def progression_page(request:Request,days:int=30):
             p={"total_sp":0,"queue":[],"changes":[],"captured_at":None,"has_snapshot":False}
         out.append({"id":x["character_id"],"name":x["name"],"role":x["character_role"] or "alt","portrait":f"https://images.evetech.net/characters/{x['character_id']}/portrait?size=128",**p})
     boot={"page":"progression","characters":out,"luck_stats":progression_luck_stats(days),"site_performance":progression_site_performance(days),"version":APP_VERSION}
-    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"Progression"})
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":{**boot,"account":accounts.bootstrap(request)},"title":"Progression"})
 
 @app.get("/history",response_class=HTMLResponse)
 async def history(request:Request,days:int=7,run_page:int=1,session_page:int=1,analytics:int=0):
     days=30 if days==30 else 7; start_day=utcnow().date()-timedelta(days=days-1)
     run_page=max(1,int(run_page or 1));session_page=max(1,int(session_page or 1));runs_per_page=30;sessions_per_page=20
     with db() as c:
-        rs=c.execute("SELECT * FROM runs WHERE status='complete' ORDER BY ended_at DESC").fetchall()
-        ss=c.execute("SELECT * FROM sessions WHERE status='complete' ORDER BY ended_at DESC").fetchall()
-        ess=c.execute("""SELECT e.*,COALESCE(ch.name,CAST(e.character_id AS TEXT)) AS character_name FROM ess_events e LEFT JOIN characters ch ON ch.character_id=e.character_id ORDER BY e.date DESC""").fetchall()
-        alls=c.execute("SELECT id FROM sessions WHERE status='complete' ORDER BY id DESC LIMIT 500").fetchall()
+        rs=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND status='complete' ORDER BY ended_at DESC").fetchall()
+        ss=c.execute(f"SELECT * FROM sessions WHERE sessions.user_id={user_id()} AND status='complete' ORDER BY ended_at DESC").fetchall()
+        ess=c.execute(f"""SELECT e.*,COALESCE(ch.name,CAST(e.character_id AS TEXT)) AS character_name FROM ess_events e LEFT JOIN characters ch ON ch.character_id=e.character_id  WHERE e.user_id={user_id()} ORDER BY e.date DESC""").fetchall()
+        alls=c.execute(f"SELECT id FROM sessions WHERE sessions.user_id={user_id()} AND status='complete' ORDER BY id DESC LIMIT 500").fetchall()
     buckets={(start_day+timedelta(days=i)).isoformat():{"date":(start_day+timedelta(days=i)).isoformat(),"bounty":0,"ess":0,"loot":0,"salvage":0,"bonus":0,"seconds":0,"sites":0,"isk_hr":0} for i in range(days)}
     for r in rs:
         if not r["ended_at"]:continue
@@ -963,13 +959,19 @@ async def history(request:Request,days:int=7,run_page:int=1,session_page:int=1,a
     analytics_ess=[dict(e) for e in ess if e["date"] and parse_iso(e["date"])>=analytics_cutoff]
     history_data={"days":days,"runs":analytics_runs if analytics else [enrich(r) for r in run_slice],"sessions":analytics_sessions if analytics else session_slice,"ess":analytics_ess if analytics else [dict(e) for e in ess[:100]],"analytics_runs":analytics_runs,"analytics_sessions":analytics_sessions,"analytics_ess":analytics_ess,"all_sessions":[dict(x) for x in alls],"chart_data":list(buckets.values()),"recent_escalations":recent_escalations,"run_page":run_page,"run_pages":run_pages,"run_total":run_total,"runs_per_page":runs_per_page,"session_page":session_page,"session_pages":session_pages,"session_total":session_total,"sessions_per_page":sessions_per_page,"summary":{"avg_duration_seconds":avg_duration,"total_bonus":total_bonus}}
     boot={"page":"history","history":history_data,"version":APP_VERSION}
-    return templates.TemplateResponse(request=request,name="react.html",context={"boot":boot,"title":"History"})
+    return templates.TemplateResponse(request=request,name="react.html",context={"boot":{**boot,"account":accounts.bootstrap(request)},"title":"History"})
 
 @app.post("/ess/{eid}/assign")
-async def assign_ess(eid:int,session_id:str=Form("")):
+async def assign_ess(eid:int,session_id:str=Form(""),character_id:str=Form("")):
     with db() as c:
-        if session_id:c.execute("UPDATE ess_events SET session_id=?,match_status='manual' WHERE entry_id=?",(int(session_id),eid))
-        else:c.execute("UPDATE ess_events SET session_id=NULL,match_status='unassigned' WHERE entry_id=?",(eid,))
+        events=c.execute("SELECT character_id FROM ess_events WHERE entry_id=? AND user_id=?",(eid,user_id())).fetchall()
+        if character_id:
+            events=[e for e in events if str(e["character_id"])==character_id]
+        if len(events)!=1:
+            return JSONResponse({"ok":False,"error":"ESS event not found or ambiguous."},404)
+        if session_id and not c.execute("SELECT 1 FROM sessions WHERE id=? AND user_id=?",(int(session_id),user_id())).fetchone():
+            return JSONResponse({"ok":False,"error":"Session not found."},404)
+        c.execute("UPDATE ess_events SET session_id=?,match_status=? WHERE entry_id=? AND character_id=? AND user_id=?",(int(session_id) if session_id else None,"manual" if session_id else "unassigned",eid,events[0]["character_id"],user_id()))
     return RedirectResponse("/history",303)
 
 if __name__=="__main__":
