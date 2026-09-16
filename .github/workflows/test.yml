@@ -2,7 +2,7 @@ name: Ratting Tracker Tests
 
 on:
   push:
-    branches: [main, web-hosted-v1]
+    branches: ['**']
   pull_request:
     branches: [main]
   workflow_dispatch:
