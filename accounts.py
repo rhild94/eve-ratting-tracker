@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 account_context = ContextVar("account_id", default=None)
 OWNED_TABLES = ("characters", "runs", "sessions", "ess_events", "wallet_entries", "skill_snapshots")
+SUPABASE_API_ROLES = ("anon", "authenticated", "service_role")
 COOKIE = "tracker_session"
 SESSION_SECONDS = 60 * 60 * 24 * 14
 
@@ -29,6 +30,86 @@ def user_id():
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _pg_ident(value):
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def harden_postgres_schema(c, postgres):
+    """Keep the direct-Postgres backend private from Supabase client API roles.
+
+    RLS is enabled but not forced: the application's direct database role owns its
+    tables and therefore keeps owner access, while Data API roles get no grants.
+    Default privileges are also revoked so later migrations do not re-expose new
+    tables, sequences, or functions before the next startup hardening pass.
+    """
+    if not postgres:
+        return
+
+    roles = {
+        r["rolname"]
+        for r in c.execute(
+            "SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated','service_role')"
+        ).fetchall()
+    }
+    tables = c.execute(
+        """SELECT cls.relname
+             FROM pg_class cls
+             JOIN pg_namespace ns ON ns.oid=cls.relnamespace
+            WHERE ns.nspname='public'
+              AND cls.relkind IN ('r','p')
+              AND cls.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+            ORDER BY cls.relname"""
+    ).fetchall()
+    sequences = c.execute(
+        """SELECT cls.relname
+             FROM pg_class cls
+             JOIN pg_namespace ns ON ns.oid=cls.relnamespace
+            WHERE ns.nspname='public'
+              AND cls.relkind='S'
+              AND cls.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+            ORDER BY cls.relname"""
+    ).fetchall()
+
+    for row in tables:
+        table = _pg_ident(row["relname"])
+        c.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY")
+        for role in roles:
+            c.execute(f"REVOKE ALL PRIVILEGES ON TABLE public.{table} FROM {_pg_ident(role)}")
+
+    for row in sequences:
+        sequence = _pg_ident(row["relname"])
+        for role in roles:
+            c.execute(f"REVOKE ALL PRIVILEGES ON SEQUENCE public.{sequence} FROM {_pg_ident(role)}")
+
+    # This project owns the public schema for tracker data. Client-facing Supabase
+    # roles must never execute public-schema functions directly. Revoke both global
+    # and public-schema defaults: PostgreSQL applies global defaults before schema
+    # defaults, so a schema-local REVOKE alone cannot cancel a global grant.
+    for role in roles:
+        role_ident = _pg_ident(role)
+        c.execute(f"REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM {role_ident}")
+        c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM {role_ident}")
+    c.execute("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC")
+    c.execute("ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC")
+
+    print(
+        "PostgreSQL public schema hardened: "
+        + json.dumps(
+            {
+                "rls_tables": [r["relname"] for r in tables],
+                "sequences": [r["relname"] for r in sequences],
+                "revoked_roles": sorted(roles),
+            }
+        ),
+        flush=True,
+    )
 
 
 def migrate(c, postgres, ensure_col):
@@ -100,6 +181,7 @@ def migrate(c, postgres, ensure_col):
             # SQLite cannot add NOT NULL to an existing populated column.
             for operation in ("INSERT", "UPDATE"):
                 c.execute(f"CREATE TRIGGER IF NOT EXISTS {table}_owner_{operation.lower()} BEFORE {operation} ON {table} WHEN NEW.user_id IS NULL OR NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id) BEGIN SELECT RAISE(ABORT,'Account ownership required'); END")
+    harden_postgres_schema(c, postgres)
 
 
 def create_session(c, uid):
