@@ -1,8 +1,15 @@
 (()=>{
 'use strict';
-function updateEveClock(){document.querySelectorAll('[data-eve-clock]').forEach(el=>el.textContent=new Date().toLocaleTimeString('en-GB',{timeZone:'UTC',hour12:false}))}
+function updateEveClock(){const el=document.querySelector('[data-eve-clock]');if(!el)return;const d=new Date(),hh=String(d.getUTCHours()).padStart(2,'0'),mm=String(d.getUTCMinutes()).padStart(2,'0'),ss=String(d.getUTCSeconds()).padStart(2,'0');el.textContent=`${hh}:${mm}:${ss}`}
+function addCss(href,id){if(document.getElementById(id))return;const l=document.createElement('link');l.id=id;l.rel='stylesheet';l.href=href;document.head.appendChild(l)}
+function addScript(src,id,done){if(document.getElementById(id)){done?.();return}const s=document.createElement('script');s.id=id;s.src=src;s.onload=()=>done?.();document.body.appendChild(s)}
 function apply(){window.applyNextUpdateV2?.();window.applyProdUpdateV3?.();window.applyReleaseV4?.()}
-window.applyEveShell=apply;
-document.readyState==='loading'?document.addEventListener('DOMContentLoaded',apply):apply();
-setInterval(updateEveClock,1000);updateEveClock();
+addCss('/static/next_update.css?v=prod-ui-1','next-update-css');addCss('/static/next_update_v2.css?v=prod-ui-3','next-update-v2-css');addCss('/static/prod_update_v3.css?v=prod-ui-3','prod-update-v3-css');addCss('/static/release_v4.css?v=release-4','release-v4-css');
+/* Load v4 first so analytics fetches from the older compatibility layers use the paginated-history analytics mode. */
+addScript('/static/release_v4.js?v=release-4','release-v4-js',()=>{
+ addScript('/static/next_update_v2.js?v=prod-ui-3','next-update-v2-js',()=>window.applyNextUpdateV2?.());
+ addScript('/static/prod_update_v3.js?v=prod-ui-3a','prod-update-v3-js',()=>window.applyProdUpdateV3?.());
+ apply();
+});
+updateEveClock();setInterval(updateEveClock,1000);if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(apply,0));else setTimeout(apply,0);new MutationObserver(apply).observe(document.documentElement,{childList:true,subtree:true})
 })();
