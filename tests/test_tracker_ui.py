@@ -147,8 +147,9 @@ def test_esi_health_warning_is_compact_and_visible(page):
     }""")
     expect(page.locator("#esiAlert")).to_be_visible()
     expect(page.locator("#esiAlert")).to_contain_text("ESI-based values may be stale")
-    expect(page.locator(".esi-stack #systemStatus")).to_contain_text("Next check")
-    expect(page.locator("#systemStatus")).to_contain_text("2 runs pending bounty data")
+    expect(page.locator(".esi-stack #systemStatus")).to_have_text("ESI sync issue")
+    expect(page.locator("#systemStatus")).not_to_contain_text("Next check")
+    expect(page.locator("#systemStatus")).not_to_contain_text("pending bounty data")
 
 
 def test_history_delete_removes_run_without_hanging(page):
@@ -164,9 +165,31 @@ def test_history_delete_removes_run_without_hanging(page):
     expect(row).to_have_count(0)
 
 
-def test_esi_status_stays_below_sync_button(page):
-    expect(page.locator(".esi-stack #syncBtn")).to_be_visible()
-    expect(page.locator(".esi-stack #systemStatus")).to_be_visible()
+def test_esi_status_stays_below_sync_button_without_moving_actions(page):
+    sync = page.locator(".esi-stack #syncBtn")
+    status = page.locator(".esi-stack #systemStatus")
+    logout = page.get_by_role("button", name="Log out")
+    expect(sync).to_be_visible()
+    expect(status).to_be_visible()
+    sync_box = sync.bounding_box()
+    status_box = status.bounding_box()
+    logout_box = logout.bounding_box()
+    assert status_box["y"] >= sync_box["y"] + sync_box["height"] - 1
+    assert abs(sync_box["y"] - logout_box["y"]) <= 3
+
+
+def test_sync_header_uses_last_sync_only_wording_on_tracker_and_dashboard(page):
+    tracker_status = page.locator("#systemStatus")
+    expect(tracker_status).to_be_visible()
+    expect(tracker_status).not_to_contain_text("Next check")
+    expect(tracker_status).not_to_contain_text("pending bounty data")
+
+    base = page.url.rstrip("/")
+    page.goto(base + "/dashboard")
+    status = page.locator(".global-sync-status")
+    expect(status).to_be_visible()
+    expect(status).not_to_contain_text("Next check")
+    expect(status).not_to_contain_text("pending bounty data")
 
 
 def test_unconfigured_esi_keeps_local_tracker_ready(page):
@@ -176,7 +199,7 @@ def test_unconfigured_esi_keeps_local_tracker_ready(page):
       renderEsiStatus();
     }""")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
-    expect(page.locator(".esi-stack #systemStatus")).to_contain_text("Local tracker ready")
+    expect(page.locator(".esi-stack #systemStatus")).to_contain_text("ESI not configured")
     expect(page.locator("#syncBtn")).to_be_disabled()
 
 
@@ -264,6 +287,15 @@ def test_character_can_be_designated_main(page):
         btn.click()
     expect(page.locator(".role-action.is-main")).to_contain_text("Main")
     expect(page.locator(".character-copy small")).to_contain_text("Main character")
+    main_wrap = page.locator(".participant-wrap.main-character")
+    expect(main_wrap).to_have_count(1)
+    card = main_wrap.locator(".participant-card")
+    role = main_wrap.locator(".role-action")
+    shadow = card.evaluate("el => getComputedStyle(el).boxShadow")
+    assert shadow and shadow != "none"
+    card_box = card.bounding_box()
+    role_box = role.bounding_box()
+    assert role_box["height"] < card_box["height"] * 0.7
 
 
 def test_history_heat_scale_is_visible(page):
@@ -301,4 +333,3 @@ def test_dashboard_uses_session_performance_graph(page):
     expect(page.locator("body")).to_contain_text("Ratting ISK/h")
     expect(page.locator("body")).to_contain_text("Bounty + ESS only")
     expect(page.locator("body")).to_contain_text("Total ISK/h")
-
