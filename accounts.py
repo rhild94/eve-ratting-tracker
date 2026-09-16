@@ -200,6 +200,63 @@ class Accounts:
             r.raise_for_status()
             return r.json()
 
+    def merge_account(self, c, source_uid, destination_uid, authenticated_cid):
+        """Merge a duplicate account only after its Main character has just passed EVE SSO."""
+        source_uid, destination_uid, authenticated_cid = int(source_uid), int(destination_uid), int(authenticated_cid)
+        if source_uid == destination_uid:
+            return
+        source = c.execute("SELECT primary_character_id FROM users WHERE id=?", (source_uid,)).fetchone()
+        destination = c.execute("SELECT primary_character_id FROM users WHERE id=?", (destination_uid,)).fetchone()
+        if not source or not destination:
+            raise HTTPException(409, "Account connection changed; please try again")
+        if int(source["primary_character_id"] or 0) != authenticated_cid:
+            raise HTTPException(409, "This character belongs to another tracker account. Connect that account's Main character to merge it.")
+        if not destination["primary_character_id"]:
+            raise RuntimeError("Destination account has no Main character")
+        owner_row = c.execute("SELECT user_id FROM characters WHERE character_id=?", (authenticated_cid,)).fetchone()
+        if not owner_row or int(owner_row["user_id"]) != source_uid:
+            raise HTTPException(409, "Account connection changed; please try again")
+
+        source_before = {table: c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (source_uid,)).fetchone()["n"] for table in OWNED_TABLES}
+        destination_before = {table: c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (destination_uid,)).fetchone()["n"] for table in OWNED_TABLES}
+        for table in OWNED_TABLES:
+            c.execute(f"UPDATE {table} SET user_id=? WHERE user_id=?", (destination_uid, source_uid))
+
+        # The destination account keeps its explicit Main. Source Main/alt roles become alts.
+        destination_main = int(destination["primary_character_id"])
+        c.execute("UPDATE characters SET character_role='alt' WHERE user_id=?", (destination_uid,))
+        c.execute("UPDATE characters SET character_role='main' WHERE user_id=? AND character_id=?", (destination_uid, destination_main))
+        main_count = c.execute("SELECT COUNT(*) AS n FROM characters WHERE user_id=? AND character_role='main'", (destination_uid,)).fetchone()["n"]
+        if main_count != 1:
+            raise RuntimeError("Account merge could not preserve destination Main")
+
+        # Sync state is disposable metadata; keep whichever account attempted sync most recently.
+        source_sync = c.execute("SELECT * FROM account_sync_state WHERE user_id=?", (source_uid,)).fetchone()
+        destination_sync = c.execute("SELECT * FROM account_sync_state WHERE user_id=?", (destination_uid,)).fetchone()
+        if source_sync:
+            if destination_sync:
+                if (source_sync["last_attempt"] or "") > (destination_sync["last_attempt"] or ""):
+                    c.execute("UPDATE account_sync_state SET last_attempt=?,last_success=?,last_error=?,next_check=? WHERE user_id=?", (source_sync["last_attempt"],source_sync["last_success"],source_sync["last_error"],source_sync["next_check"],destination_uid))
+                c.execute("DELETE FROM account_sync_state WHERE user_id=?", (source_uid,))
+            else:
+                c.execute("UPDATE account_sync_state SET user_id=? WHERE user_id=?", (destination_uid, source_uid))
+
+        # Revoke every source-account browser and pending OAuth flow. Private ESI cache is safe to rebuild.
+        c.execute("DELETE FROM auth_sessions WHERE user_id=?", (source_uid,))
+        c.execute("DELETE FROM oauth_states WHERE user_id=?", (source_uid,))
+        c.execute("DELETE FROM esi_cache WHERE cache_key LIKE ?", (f"user:{source_uid}:%",))
+
+        for table in OWNED_TABLES:
+            source_after = c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (source_uid,)).fetchone()["n"]
+            destination_after = c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (destination_uid,)).fetchone()["n"]
+            if source_after != 0 or destination_after != source_before[table] + destination_before[table]:
+                raise RuntimeError(f"Account merge ownership verification failed for {table}")
+
+        c.execute("DELETE FROM users WHERE id=?", (source_uid,))
+        if c.execute("SELECT 1 FROM users WHERE id=?", (source_uid,)).fetchone():
+            raise RuntimeError("Duplicate account could not be retired")
+        print("Account merge verified: " + json.dumps({"source_user_id":source_uid,"destination_user_id":destination_uid,"moved_rows":source_before}), flush=True)
+
     async def callback(self, request, code, state):
         browser = request.cookies.get("tracker_oauth", "")
         with self.db() as c:
@@ -228,7 +285,7 @@ class Accounts:
             if row["intent"] == "connect":
                 uid = int(row["user_id"])
                 if existing and existing["user_id"] != uid:
-                    raise HTTPException(409, "This character cannot be connected")
+                    self.merge_account(c, existing["user_id"], uid, cid)
             elif existing:
                 uid = int(existing["user_id"])
             else:
