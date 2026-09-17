@@ -1,5 +1,9 @@
 /* Batch 1: shared ESI header alignment + clearer Main participant */
 .topbar-right{align-items:flex-start!important}
+/* Tracker has a legacy page-specific rule with higher specificity. Override it
+   explicitly so its sync stack shares the same top edge as the other actions. */
+.page-tracker .topbar-right{align-items:flex-start!important}
+.page-tracker .topbar-right>.esi-stack,.page-tracker .topbar-right>.global-sync-card{align-self:flex-start!important}
 .topbar-right>.global-sync-card,.topbar-right>.esi-stack{display:grid!important;grid-template-rows:40px 16px!important;align-items:start!important;justify-items:stretch!important;gap:4px!important;min-width:150px!important;max-width:285px!important}
 .topbar-right>.global-sync-card .global-sync-btn,.topbar-right>.esi-stack #syncBtn{align-self:start!important;width:100%!important;height:40px!important;min-height:40px!important;box-sizing:border-box!important;margin:0!important}
 .topbar-right>.global-sync-card .global-sync-status,.topbar-right>.esi-stack .esi-status{display:block;width:100%!important;box-sizing:border-box!important;min-height:16px;line-height:16px!important;font-size:10px!important;text-align:center!important;white-space:nowrap!important;overflow:hidden;text-overflow:ellipsis;max-width:285px}
