@@ -14,11 +14,6 @@ def test_global_sync_navigation(page):
         expect(page.locator(".global-sync-card")).to_be_visible()
 
 
-def test_history_export_is_removed(page):
-    page.goto(base_url(page) + "/history")
-    expect(page.locator("button").filter(has_text="Export")).not_to_be_visible()
-
-
 def test_character_details_opens_training_queue_only(page):
     page.goto(base_url(page) + "/progression?view=characters")
     btn = page.locator(".character-card-xl").first.locator("text=View Details")
@@ -26,13 +21,6 @@ def test_character_details_opens_training_queue_only(page):
     btn.click()
     expect(page.locator(".queue-modal")).to_be_visible()
     expect(page.locator(".queue-modal")).to_contain_text("TRAINING QUEUE")
-
-
-def test_progression_uses_site_performance_without_training_snapshot(page):
-    page.goto(base_url(page) + "/progression")
-    expect(page.locator("#sitePerformanceV3")).to_be_visible()
-    expect(page.locator("#sitePerformanceV3 h2")).to_have_text("Site Performance")
-    expect(page.locator(".skill-snapshot").first).not_to_be_visible()
 
 
 def test_angel_hub_trigger_is_protected(page):

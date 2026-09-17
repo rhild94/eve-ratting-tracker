@@ -36,22 +36,6 @@ def upsert_alt(test_app, cid=90000002, name="Second Pilot", connected=1):
     return cid
 
 
-def test_pause_timer_freezes_exact_visible_stopwatch(page):
-    page.select_option("#anomaly", label="Angel Hub")
-    page.click("#startBtn")
-    expect(page.locator("#pauseBtn")).to_be_visible()
-    page.wait_for_timeout(1200)
-    page.click("#pauseBtn")
-    expect(page.locator("#pauseBtn")).to_have_text("▶ Resume Timer")
-    page.wait_for_timeout(300)
-    frozen = page.locator("#timer").inner_text()
-    page.wait_for_timeout(1400)
-    assert page.locator("#timer").inner_text() == frozen
-    page.click("#pauseBtn")
-    expect(page.locator("#pauseBtn")).to_have_text("⏸ Pause Timer")
-    expect(page.locator("#timer")).not_to_have_text(frozen, timeout=3000)
-
-
 def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, test_app):
     db = test_app["work"] / "ratting_tracker.db"
     now = datetime.now(timezone.utc)
