@@ -18,7 +18,7 @@ Review session income, average ratting ISK/h, best sessions, recent activity, an
 
 Choose the site and variant, track the active timer, and use the wave/trigger helper while running the anomaly.
 
-[![EVE Ratting Tracker active site](docs/screenshots/tracker.svg)](docs/screenshots/tracker.svg?raw=1)
+[![EVE Ratting Tracker active site](docs/screenshots/tracker.webp)](docs/screenshots/tracker.webp?raw=1)
 
 ### History
 
