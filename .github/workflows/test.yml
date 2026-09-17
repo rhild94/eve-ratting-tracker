@@ -1,6 +1,8 @@
-name: Ratting Tracker Release Tests
+name: Ratting Tracker Release Verification
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -9,7 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  regression:
+    name: Full regression suite
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -85,3 +89,46 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  release-check:
+    name: Main release smoke check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DATABASE_URL: ''
+      TRACKER_DB_PATH: /tmp/eve-ratting-release-check.db
+      EVE_CLIENT_ID: release-check-client
+      EVE_CALLBACK_URL: https://example.invalid/callback
+      SESSION_SECRET: release-check-only-secret-12345678901234567890
+      ESI_AUTO_SYNC_INITIAL_DELAY_SECONDS: '3600'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build React frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:frontend
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Verify application imports and compiles
+        run: |
+          python -m compileall -q app.py accounts.py launcher.py
+          python -c "import app; assert app.app is not None; print('release smoke check ok')"
