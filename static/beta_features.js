@@ -4,6 +4,46 @@ const BOOT=window.__BOOTSTRAP__||{};
 const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const money=v=>Number(v||0);
+const SITE_ESCALATIONS={
+ 'Angel Burrow':[],
+ 'Angel Hideaway':['Angel Repurposed Outpost (3/10)'],
+ 'Angel Hidden Hideaway':[],
+ 'Angel Forsaken Hideaway':['Angel Repurposed Outpost (3/10)'],
+ 'Angel Forlorn Hideaway':[],
+ 'Angel Refuge':["Angel's Red Light District (5/10)"],
+ 'Angel Den':["Angel's Red Light District (5/10)"],
+ 'Angel Hidden Den':[],
+ 'Angel Forsaken Den':['Angel Military Operations Complex (7/10)'],
+ 'Angel Forlorn Den':['Angel Military Operations Complex (7/10)'],
+ 'Angel Yard':["Angel's Red Light District (5/10)"],
+ 'Angel Rally Point':['Angel Mineral Acquisition Outpost (6/10)'],
+ 'Angel Hidden Rally Point':['Angel Mineral Acquisition Outpost (6/10)'],
+ 'Angel Forsaken Rally Point':['Cartel Prisoner Retention','Angel Capital Staging'],
+ 'Angel Forlorn Rally Point':['Cartel Prisoner Retention'],
+ 'Angel Port':['Angel Military Operations Complex (7/10)'],
+ 'Angel Hub':['Cartel Prisoner Retention','Angel Capital Staging','Angel Shielded Starbase'],
+ 'Angel Hidden Hub':['Angel Domination Fleet Staging Point'],
+ 'Angel Forsaken Hub':['Angel Domination Fleet Staging Point','Angel Capital Staging','Angel Occupied Mine'],
+ 'Angel Forlorn Hub':['Angel Domination Fleet Staging Point','Angel Shielded Starbase','Angel Occupied Mine'],
+ 'Angel Haven':['Angel Cartel Naval Shipyard','Angel Capital Staging','Angel Shielded Starbase','Angel Occupied Mine'],
+ 'Angel Sanctum':['Angel Shielded Starbase','Angel Capital Staging','Angel Naval Shipyard','Angel Occupied Mine']
+};
+window.ANGEL_SITE_ESCALATIONS=SITE_ESCALATIONS;
+const siteEscalations=anomaly=>Object.prototype.hasOwnProperty.call(SITE_ESCALATIONS,anomaly)?SITE_ESCALATIONS[anomaly]:[];
+function rewriteRunEscalations(payload){
+ if(payload?.run?.anomaly&&Object.prototype.hasOwnProperty.call(payload,'escalations'))payload.escalations=[...siteEscalations(payload.run.anomaly)];
+ return payload;
+}
+function applyEscalationModalRules(){
+ const modal=q('#modalContent'),select=q('#escName',modal),toggle=q('#gotEsc',modal);if(!modal||!select||!toggle)return;
+ const anomaly=q('.modal-head h2',modal)?.textContent?.trim();if(!Object.prototype.hasOwnProperty.call(SITE_ESCALATIONS,anomaly))return;
+ const choices=siteEscalations(anomaly),current=select.value;
+ select.innerHTML='<option value="">Select escalation</option>'+choices.map(x=>`<option>${esc(x)}</option>`).join('');
+ if(choices.includes(current))select.value=current;
+ const toggleRow=toggle.closest('.toggle-row');
+ if(toggleRow)toggleRow.style.display=choices.length?'':'none';
+ if(!choices.length){toggle.checked=false;q('#escFields',modal)?.classList.add('hidden');q('#escValueRow',modal)?.classList.add('hidden')}
+}
 function localDateTime(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`}
 function localShortDate(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v);return d.toLocaleDateString(undefined,{month:'short',day:'2-digit'})}
 function localZone(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local time'}catch{return 'Local time'}}
@@ -37,9 +77,9 @@ function recommendationBox(){
  if(location.pathname!=='/progression'||new URLSearchParams(location.search).get('view')||q('#betaRecommendation'))return;
  fetch('/api/dashboard').then(r=>r.ok?r.json():null).then(d=>{const recent=d?.recent||[];if(!recent.length)return;const groups={};for(const r of recent){const rate=money(r.isk_hr),dur=money(r.duration_seconds);if(!rate||!dur)continue;const k=r.anomaly||'Other';(groups[k] ||= []).push({rate,dur})}const scored=Object.entries(groups).map(([name,a])=>{const n=a.length,avg=a.reduce((sum,x)=>sum+x.rate,0)/n,avgDur=a.reduce((sum,x)=>sum+x.dur,0)/n,variance=a.reduce((sum,x)=>sum+(x.rate-avg)**2,0)/n,cv=avg?Math.sqrt(variance)/avg:1,confidence=n>=4?'High':n>=2?'Medium':'Low',score=avg*Math.min(1,n/3)*(1-Math.min(.35,cv*.12));return{name,n,avg,avgDur,confidence,score}}).sort((a,b)=>b.score-a.score);if(!scored.length)return;const x=scored[0],panel=document.createElement('section');panel.id='betaRecommendation';panel.className='panel sci-panel beta-recommendation';panel.innerHTML=`<div class="panel-head"><div><span class="eyebrow">RECOMMENDED SITE</span><h2>${esc(x.name)}</h2><span class="muted">Best current balance of recent pace, consistency and sample size.</span></div><span class="confidence-chip ${x.confidence.toLowerCase()}">${x.confidence} confidence</span></div><div class="recommend-grid"><div><small>Avg site bounty rate</small><b>${(x.avg/1e6).toFixed(1)}M/h</b></div><div><small>Avg completion</small><b>${Math.floor(x.avgDur/60)}m ${Math.round(x.avgDur%60)}s</b></div><div><small>Runs tracked</small><b>${x.n}</b></div></div><p class="recommend-why"><b>Why:</b> strongest weighted recent site performance. Lucky loot and escalation values are excluded.</p>`;q('.progression-metrics')?.insertAdjacentElement('afterend',panel)}).catch(()=>{})
 }
-function installFetchRules(){if(window.__betaFetchInstalled)return;window.__betaFetchInstalled=true;const native=window.fetch.bind(window);window.fetch=async function(input,init){let url=typeof input==='string'?input:input?.url||'',opts=init?{...init}:init;if(opts?.body&&/\/api\/run\/\d+\/bonus(?:\?|$)/.test(url)){try{const body=JSON.parse(opts.body);if(!['Sold','Ran Myself'].includes(body.escalation_status))body.escalation_sale_value=0;opts.body=JSON.stringify(body)}catch{}}return native(input,opts)}}
+function installFetchRules(){if(window.__betaFetchInstalled)return;window.__betaFetchInstalled=true;const native=window.fetch.bind(window);window.fetch=async function(input,init){let url=typeof input==='string'?input:input?.url||'',opts=init?{...init}:init;if(opts?.body&&/\/api\/run\/\d+\/bonus(?:\?|$)/.test(url)){try{const body=JSON.parse(opts.body);if(!['Sold','Ran Myself'].includes(body.escalation_status))body.escalation_sale_value=0;opts.body=JSON.stringify(body)}catch{}}const response=await native(input,opts);if(/\/api\/run\/\d+(?:\/complete)?(?:\?|$)/.test(url)&&!/\/(?:bonus|pause)(?:\?|$)/.test(url)){const nativeJson=response.json.bind(response);response.json=async()=>rewriteRunEscalations(await nativeJson())}return response}}
 async function repairStaleEscalations(){if(location.pathname!=='/history'||!BOOT.history?.runs||sessionStorage.getItem('betaEscRepair')==='done')return;const stale=BOOT.history.runs.filter(r=>!['Sold','Ran Myself'].includes(r.escalation_status)&&money(r.escalation_sale_value)>0);if(!stale.length){sessionStorage.setItem('betaEscRepair','done');return}let fixed=0;for(const r of stale){try{const resp=await fetch(`/api/run/${r.id}/bonus`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({escalation_name:r.escalation_name||'',escalation_status:r.escalation_status||'',escalation_sale_value:0,rare_spawn_type:r.rare_spawn_type||'',rare_spawn_name:r.rare_spawn_name||'',rare_spawn_value:money(r.rare_spawn_value),notes:r.notes||''})});if(resp.ok)fixed++}catch{}}sessionStorage.setItem('betaEscRepair','done');if(fixed)location.reload()}
-function observe(){let scheduled=false;const run=()=>{scheduled=false;applyBetaBrand();applyLocalTimes();installDashboardSync()};const mo=new MutationObserver(()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(run)});mo.observe(document.documentElement,{childList:true,subtree:true});run()}
+function observe(){let scheduled=false;const run=()=>{scheduled=false;applyBetaBrand();applyLocalTimes();installDashboardSync();applyEscalationModalRules()};const mo=new MutationObserver(()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(run)});mo.observe(document.documentElement,{childList:true,subtree:true});run()}
 installFetchRules();
 function init(){applyBetaBrand();applyLocalTimes();installDashboardSync();recommendationBox();repairStaleEscalations();observe()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
