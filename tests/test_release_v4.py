@@ -36,7 +36,7 @@ def upsert_alt(test_app, cid=90000002, name="Second Pilot", connected=1):
     return cid
 
 
-def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, test_app):
+def test_history_pagination_income_rendering_and_visualizations(page, test_app):
     db = test_app["work"] / "ratting_tracker.db"
     now = datetime.now(timezone.utc)
     with sqlite3.connect(db) as c:
@@ -70,6 +70,12 @@ def test_history_pages_all_runs_and_sessions_and_shows_escalation_value(page, te
     expect(page.locator(".history-metrics .metric-card").first.locator("b")).to_have_text("35")
     expect(page.locator(".escalation-list")).to_contain_text("123M ISK")
     expect(page.locator(".history-main tbody tr")).to_have_count(30)
+    expect(page.locator("#chart")).to_be_visible()
+    expect(page.locator("#chartTooltip")).to_have_count(1)
+    expect(page.locator(".income-legend")).to_contain_text("Lower ISK")
+    expect(page.locator(".income-legend")).to_contain_text("Higher ISK")
+    colors = page.evaluate("() => [incomeColor(0).css, incomeColor(100000000).css]")
+    assert colors[0] != colors[1]
     page.locator('[data-pagination="runs"] a').filter(has_text="Next").click()
     expect(page).to_have_url(re.compile(r"run_page=2"))
     expect(page.locator(".history-main tbody tr")).to_have_count(5)

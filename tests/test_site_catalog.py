@@ -40,11 +40,8 @@ def _backend_anomalies():
     raise AssertionError("ANOMALIES assignment not found in app.py")
 
 
-def test_complete_angel_anomaly_catalog_is_exposed_by_backend():
+def test_angel_catalog_matches_backend_and_faction_selector():
     assert _backend_anomalies() == EXPECTED_ANGEL_ANOMALIES
-
-
-def test_faction_selector_contains_every_backend_angel_site():
     source = Path("static/site_selector.js").read_text(encoding="utf-8")
     for anomaly in EXPECTED_ANGEL_ANOMALIES:
         assert f'anomaly:"{anomaly}"' in source

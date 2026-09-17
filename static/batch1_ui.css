@@ -1,8 +1,8 @@
 /* Batch 1: shared ESI header alignment + clearer Main participant */
 .topbar-right{align-items:flex-start!important}
-.global-sync-card,.esi-stack{display:grid!important;grid-template-rows:40px 16px!important;align-items:start!important;gap:4px!important;min-width:150px!important;max-width:285px!important}
-.global-sync-btn,.esi-stack #syncBtn{align-self:start!important;width:100%!important;height:40px!important;min-height:40px!important;box-sizing:border-box!important;margin:0!important}
-.global-sync-status,.esi-status{display:block;min-height:16px;line-height:16px!important;font-size:10px!important;text-align:center!important;white-space:nowrap!important;overflow:hidden;text-overflow:ellipsis;max-width:285px}
+.topbar-right>.global-sync-card,.topbar-right>.esi-stack{display:grid!important;grid-template-rows:40px 16px!important;align-items:start!important;justify-items:stretch!important;gap:4px!important;min-width:150px!important;max-width:285px!important}
+.topbar-right>.global-sync-card .global-sync-btn,.topbar-right>.esi-stack #syncBtn{align-self:start!important;width:100%!important;height:40px!important;min-height:40px!important;box-sizing:border-box!important;margin:0!important}
+.topbar-right>.global-sync-card .global-sync-status,.topbar-right>.esi-stack .esi-status{display:block;width:100%!important;box-sizing:border-box!important;min-height:16px;line-height:16px!important;font-size:10px!important;text-align:center!important;white-space:nowrap!important;overflow:hidden;text-overflow:ellipsis;max-width:285px}
 .topbar-right>.button,.topbar-right>button.secondary{align-self:start!important;height:40px!important;min-height:40px!important;box-sizing:border-box!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;margin:0!important;white-space:nowrap}
 .top-connect,.eve-time{align-self:start!important}
 
@@ -13,6 +13,6 @@
 .role-action.is-main{padding:5px 7px!important}
 
 @media(max-width:900px){
- .global-sync-card,.esi-stack{min-width:132px!important}
- .global-sync-status,.esi-status{font-size:9px!important}
+ .topbar-right>.global-sync-card,.topbar-right>.esi-stack{min-width:132px!important}
+ .topbar-right>.global-sync-card .global-sync-status,.topbar-right>.esi-stack .esi-status{font-size:9px!important}
 }
