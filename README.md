@@ -1,48 +1,78 @@
 # EVE Ratting Tracker
 
-**Current version: 10.0.0**
+A web-based tracker for EVE Online ratting sessions. It combines a live site timer and site helper with ESI data so you can keep track of **bounties, ESS payouts, loot, salvage, escalations, rare spawns, session performance, and ISK per hour** across one or multiple characters.
 
-Private development repository for the EVE Online ratting tracker.
+**Live tracker:** https://eve-ratting-tracker.onrender.com
 
-## Local-first architecture
+The tracker is designed to stay useful even when ESI is delayed or temporarily unavailable: site timing and manual results are saved first, while ESI synchronization catches up separately.
 
-Ratting actions are saved locally and do not wait for ESI. ESI synchronization runs automatically in the background and can also be triggered manually. Local ratting actions never wait for ESI.
+## Screenshots
 
-## Windows / clean install
+### Performance Dashboard
 
-Extract the package and double-click `RUN_TRACKER.bat`. The launcher creates its own Python environment, installs dependencies, opens the browser, and attempts to import an existing tracker `.env` automatically.
+Review session income, average ratting ISK/h, best sessions, recent activity, and connected characters.
 
-Configure `EVE_CLIENT_ID` and the registered `EVE_CALLBACK_URL` before starting. Set `EVE_CLIENT_SECRET` for a confidential EVE application; public applications use PKCE. Login uses EVE SSO. Each account owns its characters, runs, sessions, wallet/ESS events, progression, and sync state. Use **Connect Another Character** while logged in to attach an alt; select Main explicitly in Characters. The HUD uses only that Main's ESI location and affiliation. Ratting timers and saving remain independent of ESI availability.
+[![EVE Ratting Tracker Dashboard](docs/screenshots/dashboard.webp)](docs/screenshots/dashboard.webp?raw=1)
 
-The shared access key and web-based global configuration editor are retired. `APP_ACCESS_KEY` no longer grants access. Sessions are opaque, stored hashed in the database, expire after 14 days, and are revoked on logout. Cookies are HttpOnly, SameSite=Lax, and Secure for HTTPS/Render. Writes require a session-bound CSRF header. OAuth uses browser-bound, expiring, single-use state, PKCE, and signature/issuer/audience/expiry/character-owner validation.
+### Live Site Tracker
 
-## Existing production data
+Choose the site and variant, track the active timer, and use the wave/trigger helper while running the anomaly.
 
-Schema initialization runs the account migration in one transaction. Before any login, all existing private rows are assigned to initial account 1 and the existing explicit Main is recorded. Existing server-held EVE token owner identities are pinned to prevent a subsequently transferred character from claiming history. Disconnected characters without tokens remain reserved to the initial account and can only be reconnected from that authenticated account. Ambiguous Main selection or missing identity for a connected character stops startup instead of assigning data to the first visitor. Row counts and ownership are checked, and `account_migrations` stores the audit. No tracked records or income fields are deleted or rewritten. Keep a database backup before upgrading; rollback after migration must use account-aware code, because older releases do not enforce ownership.
+[![EVE Ratting Tracker active site](docs/screenshots/tracker.webp)](docs/screenshots/tracker.webp?raw=1)
 
-## Production database security
+### History
 
-The hosted tracker uses a direct PostgreSQL `DATABASE_URL`; the browser never connects to Supabase directly. Keep the Supabase **Data API disabled** for this project and do not add Supabase client/service-role keys to the frontend.
+Browse completed sites and sessions, including duration, bounty, ISK/h, bonuses, loot, salvage, ESS payments, escalations, and rare-spawn results.
 
-On every PostgreSQL startup/migration the tracker now applies defense-in-depth hardening to the app-owned `public` schema: Row Level Security is enabled on every app-owned public table, all table/sequence privileges are revoked from Supabase client API roles (`anon`, `authenticated`, and `service_role`) when those roles exist, public-schema function execution is revoked from those roles and `PUBLIC`, and safe default privileges are installed for future tables, sequences, and functions. RLS is deliberately not forced, so the direct owning backend connection continues to work while client API roles remain unable to access tracker data.
+[![EVE Ratting Tracker History](docs/screenshots/history.webp)](docs/screenshots/history.webp?raw=1)
 
-This startup hardening is idempotent and runs after schema creation, so future application migrations are secured automatically. PostgreSQL regression tests simulate permissive Supabase defaults and verify the lockdown as well as continued backend read/write access.
+> The screenshots above use fictional characters and generated demo values. No real player or account data is shown.
 
-Public `/health` returns only health and version. Private responses use `Cache-Control: no-store`. There are no corporation/group sharing features or administrative login bypasses.
+## Main Features
 
-Your runtime `.env`, `.venv`, and `ratting_tracker.db` stay local and are excluded from Git.
+- **EVE SSO / ESI integration** for character data, wallet activity, bounty information, ESS payouts, location, ship information, skills, and training queue.
+- **Multiple characters** under the same tracker account, with one character designated as Main.
+- **Site timer** with pause/resume support and immediate local saving.
+- **Site and variant selection** with an Angel Cartel anomaly catalog covering the available anomaly tiers.
+- **Wave and trigger helper** for supported sites, including site-specific variants where applicable.
+- **Session tracking** so multiple sites can be grouped into one ratting session.
+- **Income tracking** for bounty, ESS, loot, salvage, sold escalations, escalations run personally, and commander/rare-spawn drops.
+- **Performance dashboard** with session totals, averages, ISK/h trends, recent runs, and best-session performance.
+- **History** with detailed site/session records and editable results.
+- **Progression statistics** for site performance, escalation rates, rare spawns, milestones, character SP, and training queue information.
+- **Background ESI synchronization** so an ESI delay does not stop the active tracker.
 
-## Automated tests
+## How to Use
 
-```bash
-python -m pip install -r requirements.txt -r requirements-test.txt
-python -m playwright install chromium
-python -m pytest tests -v
-```
+1. Open the tracker and **Log in with EVE Online**.
+2. Use **Connect Another Character** if you want to track additional characters on the same account.
+3. In **Characters**, choose which connected character should be your **Main**.
+4. Open **Tracker** and select the site, variant, and participating character(s).
+5. Press **Start Site** when you begin the site. The timer starts immediately.
+6. Follow the **wave composition and trigger helper** when the selected site has confirmed helper data.
+7. When the site is finished, press **Complete Site** and record any escalation, rare spawn, or other result that applies.
+8. When you are finished ratting, end the session and add any **loot or salvage** collected during that session.
+9. Use **Sync ESI** when needed. Bounty and ESS information is matched to your tracked activity as ESI data becomes available.
+10. Review your results in **Dashboard**, **History**, and **Progression**.
 
-GitHub Actions runs the API and browser regression suite automatically for every push to `main` and for pull requests.
-CI also runs the account security and migration tests against PostgreSQL 16. To run those locally, set `ACCOUNT_TEST_POSTGRES_URL` to a **disposable test server** with database creation and role-creation privileges; the tests create and delete isolated databases and may create the Supabase-compatible `anon`, `authenticated`, and `service_role` test roles. Never point it at production. Merge only after the complete suite is green. Render deploys automatically after main checks pass; do not manually trigger a second deploy.
+## Understanding the Income Numbers
 
+**Ratting ISK/h** measures the ratting performance itself using **Bounty + ESS** over the tracked site time.
 
-## Frontend architecture (v9)
-The hosted UI is now a React + TypeScript application mounted by FastAPI. FastAPI/PostgreSQL remain the backend and persistence layer. The live tracker keeps a temporary compatibility adapter around the proven site/timer engine while Dashboard, History, Progression, shell/navigation, and edit modals are React components. This adapter will be removed incrementally after hosted parity testing.
+**Total ISK** represents the actual recorded session income and can also include **loot, salvage, rare drops, and realized escalation value**.
+
+For escalations:
+
+- **Sold** counts the sale value as realized income.
+- **Ran Myself** counts the recorded escalation loot value as realized income.
+- Pending/unrealized escalations do not inflate the income totals.
+
+## Site Helper Notes
+
+The site helper only shows wave/trigger information that has been added to the tracker. Some sites have multiple layouts or variants, while others use a single standard layout.
+
+When a variant can be identified directly from EVE's site information, the tracker may show a short hint under the variant selector. For example, **Angel Haven's Rock Haven / Pirate Gate** can be identified by its warp-in popup.
+
+---
+
+This is a community EVE Online tracking project. EVE Online and all related trademarks are the property of CCP hf.
