@@ -31,7 +31,17 @@ SSO_AUTHORIZE="https://login.eveonline.com/v2/oauth/authorize/"
 SSO_TOKEN="https://login.eveonline.com/v2/oauth/token"
 ESI="https://esi.evetech.net"; COMPAT_DATE="2025-09-16"
 
-ANOMALIES=["Angel Hub","Angel Hidden Hub","Angel Forsaken Hub","Angel Forlorn Hub","Angel Haven","Angel Sanctum"]
+ANOMALIES=[
+"Angel Burrow",
+"Angel Hideaway","Angel Hidden Hideaway","Angel Forsaken Hideaway","Angel Forlorn Hideaway",
+"Angel Refuge",
+"Angel Den","Angel Hidden Den","Angel Forsaken Den","Angel Forlorn Den",
+"Angel Yard",
+"Angel Rally Point","Angel Hidden Rally Point","Angel Forsaken Rally Point","Angel Forlorn Rally Point",
+"Angel Port",
+"Angel Hub","Angel Hidden Hub","Angel Forsaken Hub","Angel Forlorn Hub",
+"Angel Haven","Angel Sanctum"
+]
 ESCALATIONS={
 "Angel Hub":["Cartel Prisoner Retention","Angel Capital Staging","Angel Shielded Starbase"],
 "Angel Hidden Hub":["Angel Domination Fleet Staging Point"],

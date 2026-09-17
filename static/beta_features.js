@@ -4,29 +4,70 @@ const BOOT=window.__BOOTSTRAP__||{};
 const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const money=v=>Number(v||0);
+const setText=(el,value)=>{if(el&&el.textContent!==value)el.textContent=value};
+const SITE_ESCALATIONS={
+ 'Angel Burrow':[],
+ 'Angel Hideaway':['Angel Repurposed Outpost (3/10)'],
+ 'Angel Hidden Hideaway':[],
+ 'Angel Forsaken Hideaway':['Angel Repurposed Outpost (3/10)'],
+ 'Angel Forlorn Hideaway':[],
+ 'Angel Refuge':["Angel's Red Light District (5/10)"],
+ 'Angel Den':["Angel's Red Light District (5/10)"],
+ 'Angel Hidden Den':[],
+ 'Angel Forsaken Den':['Angel Military Operations Complex (7/10)'],
+ 'Angel Forlorn Den':['Angel Military Operations Complex (7/10)'],
+ 'Angel Yard':["Angel's Red Light District (5/10)"],
+ 'Angel Rally Point':['Angel Mineral Acquisition Outpost (6/10)'],
+ 'Angel Hidden Rally Point':['Angel Mineral Acquisition Outpost (6/10)'],
+ 'Angel Forsaken Rally Point':['Cartel Prisoner Retention','Angel Capital Staging'],
+ 'Angel Forlorn Rally Point':['Cartel Prisoner Retention'],
+ 'Angel Port':['Angel Military Operations Complex (7/10)'],
+ 'Angel Hub':['Cartel Prisoner Retention','Angel Capital Staging','Angel Shielded Starbase'],
+ 'Angel Hidden Hub':['Angel Domination Fleet Staging Point'],
+ 'Angel Forsaken Hub':['Angel Domination Fleet Staging Point','Angel Capital Staging','Angel Occupied Mine'],
+ 'Angel Forlorn Hub':['Angel Domination Fleet Staging Point','Angel Shielded Starbase','Angel Occupied Mine'],
+ 'Angel Haven':['Angel Cartel Naval Shipyard','Angel Capital Staging','Angel Shielded Starbase','Angel Occupied Mine'],
+ 'Angel Sanctum':['Angel Shielded Starbase','Angel Capital Staging','Angel Naval Shipyard','Angel Occupied Mine']
+};
+window.ANGEL_SITE_ESCALATIONS=SITE_ESCALATIONS;
+const siteEscalations=anomaly=>Object.prototype.hasOwnProperty.call(SITE_ESCALATIONS,anomaly)?SITE_ESCALATIONS[anomaly]:[];
+function rewriteRunEscalations(payload){
+ if(payload?.run?.anomaly&&Object.prototype.hasOwnProperty.call(payload,'escalations'))payload.escalations=[...siteEscalations(payload.run.anomaly)];
+ return payload;
+}
+function applyEscalationModalRules(){
+ const modal=q('#modalContent'),select=q('#escName',modal),toggle=q('#gotEsc',modal);if(!modal||!select||!toggle)return;
+ const anomaly=q('.modal-head h2',modal)?.textContent?.trim();if(!Object.prototype.hasOwnProperty.call(SITE_ESCALATIONS,anomaly))return;
+ const choices=siteEscalations(anomaly),current=select.value;
+ const markup='<option value="">Select escalation</option>'+choices.map(x=>`<option>${esc(x)}</option>`).join('');
+ if(select.innerHTML!==markup){select.innerHTML=markup;if(choices.includes(current))select.value=current}
+ const toggleRow=toggle.closest('.toggle-row');
+ if(toggleRow)toggleRow.style.display=choices.length?'':'none';
+ if(!choices.length){toggle.checked=false;q('#escFields',modal)?.classList.add('hidden');q('#escValueRow',modal)?.classList.add('hidden')}
+}
 function localDateTime(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`}
 function localShortDate(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v);return d.toLocaleDateString(undefined,{month:'short',day:'2-digit'})}
 function localZone(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local time'}catch{return 'Local time'}}
 function applyBetaBrand(){
- const v=BOOT.version?`v${BOOT.version} Beta`:'Beta';const small=q('.brand small');if(small)small.textContent=v;
+ const v=BOOT.version?`v${BOOT.version} Beta`:'Beta';setText(q('.brand small'),v);
  if(!document.title.includes('Beta'))document.title+=' Beta';
- if(location.pathname==='/'){const labels=qa('.tracker-stats .card > span');for(const el of labels)if(el.textContent.trim()==='Bounty ISK/hr')el.textContent='Tracked Bounty ISK/h'}
+ if(location.pathname==='/'){const labels=qa('.tracker-stats .card > span');for(const el of labels)if(el.textContent.trim()==='Bounty ISK/hr')setText(el,'Tracked Bounty ISK/h')}
  if(location.pathname==='/dashboard'){
-  qa('.metric-card').forEach(card=>{const s=q('span',card),sm=q('small',card);if(s?.textContent.trim()==='Avg ISK/h'){s.textContent='Ratting ISK/h';if(sm)sm.textContent='Bounty + ESS only'}if(s?.textContent.trim()==='Best ISK/h')s.textContent='Best Ratting ISK/h'});
-  const h=q('.performance-panel h2'),p=q('.performance-panel .muted');if(h)h.textContent='Ratting ISK per Hour';if(p)p.textContent='Bounty + ESS only · Total ISK/h includes loot, salvage, rare drops and sold escalations.';
+  qa('.metric-card').forEach(card=>{const s=q('span',card),sm=q('small',card);if(s?.textContent.trim()==='Avg ISK/h'){setText(s,'Ratting ISK/h');setText(sm,'Bounty + ESS only')}if(s?.textContent.trim()==='Best ISK/h')setText(s,'Best Ratting ISK/h')});
+  setText(q('.performance-panel h2'),'Ratting ISK per Hour');setText(q('.performance-panel .muted'),'Bounty + ESS only · Total ISK/h includes loot, salvage, rare drops and sold escalations.');
  }
- if(location.pathname==='/progression'){const first=q('.progression-metrics .metric-card span');if(first&&first.textContent.includes('ISK/h'))first.textContent='Recent Bounty ISK/h'}
- if(new URLSearchParams(location.search).get('view')==='settings'){qa('.setting-row').forEach(row=>{if(q('span',row)?.textContent.trim()==='Version'){const b=q('b',row);if(b&&!b.textContent.includes('Beta'))b.textContent=`${b.textContent} Beta`}})}
+ if(location.pathname==='/progression'){const first=q('.progression-metrics .metric-card span');if(first&&first.textContent.includes('ISK/h'))setText(first,'Recent Bounty ISK/h')}
+ if(new URLSearchParams(location.search).get('view')==='settings'){qa('.setting-row').forEach(row=>{if(q('span',row)?.textContent.trim()==='Version'){const b=q('b',row);if(b&&!b.textContent.includes('Beta'))setText(b,`${b.textContent} Beta`)}})}
 }
 function applyLocalTimes(){
  const zone=localZone();
  if(location.pathname==='/history'&&BOOT.history){
-  for(const r of BOOT.history.runs||[]){const cell=q(`#runRow${r.id} td:first-child`);if(cell){cell.textContent=localDateTime(r.ended_at);cell.title=zone}}
-  const essRows=qa('.history-lower section:first-child tbody tr');(BOOT.history.ess||[]).slice(0,8).forEach((e,i)=>{const c=q('td:first-child',essRows[i]);if(c){c.textContent=localDateTime(e.date);c.title=zone}});
-  const escRows=qa('.escalation-list > div');(BOOT.history.runs||[]).filter(r=>r.escalation_name).slice(0,8).forEach((r,i)=>{const st=q('span',escRows[i]);if(st){st.textContent=localDateTime(r.ended_at);st.title=zone}});
+  for(const r of BOOT.history.runs||[]){const cell=q(`#runRow${r.id} td:first-child`);if(cell){setText(cell,localDateTime(r.ended_at));cell.title=zone}}
+  const essRows=qa('.history-lower section:first-child tbody tr');(BOOT.history.ess||[]).slice(0,8).forEach((e,i)=>{const c=q('td:first-child',essRows[i]);if(c){setText(c,localDateTime(e.date));c.title=zone}});
+  const escRows=qa('.escalation-list > div');(BOOT.history.runs||[]).filter(r=>r.escalation_name).slice(0,8).forEach((r,i)=>{const st=q('span',escRows[i]);if(st){setText(st,localDateTime(r.ended_at));st.title=zone}});
  }
- if(location.pathname==='/dashboard'&&BOOT.perf?.rows){const displayed=[...(BOOT.perf.rows||[])].slice(-5).reverse();qa('.mock-recent-row').forEach((row,i)=>{const st=q('span',row),src=displayed[i];if(st&&src){st.textContent=localShortDate(src.ended_at);st.title=`${localDateTime(src.ended_at)} · ${zone}`}})}
- if(location.pathname==='/progression'&&new URLSearchParams(location.search).get('view')==='characters'){(BOOT.characters||[]).forEach((c,i)=>{const card=qa('.character-card-xl')[i];if(!card||!c.captured_at)return;qa('.character-facts > div',card).forEach(box=>{if(q('small',box)?.textContent.trim()==='Last Snapshot'){const b=q('b',box);if(b){b.textContent=localDateTime(c.captured_at);b.title=zone}}})})}
+ if(location.pathname==='/dashboard'&&BOOT.perf?.rows){const displayed=[...(BOOT.perf.rows||[])].slice(-5).reverse();qa('.mock-recent-row').forEach((row,i)=>{const st=q('span',row),src=displayed[i];if(st&&src){setText(st,localShortDate(src.ended_at));st.title=`${localDateTime(src.ended_at)} · ${zone}`}})}
+ if(location.pathname==='/progression'&&new URLSearchParams(location.search).get('view')==='characters'){(BOOT.characters||[]).forEach((c,i)=>{const card=qa('.character-card-xl')[i];if(!card||!c.captured_at)return;qa('.character-facts > div',card).forEach(box=>{if(q('small',box)?.textContent.trim()==='Last Snapshot'){const b=q('b',box);if(b){setText(b,localDateTime(c.captured_at));b.title=zone}}})})}
 }
 function installDashboardSync(){
  if(location.pathname!=='/dashboard'||q('#betaDashboardSync'))return;const clock=q('.eve-time');if(!clock)return;
@@ -37,9 +78,9 @@ function recommendationBox(){
  if(location.pathname!=='/progression'||new URLSearchParams(location.search).get('view')||q('#betaRecommendation'))return;
  fetch('/api/dashboard').then(r=>r.ok?r.json():null).then(d=>{const recent=d?.recent||[];if(!recent.length)return;const groups={};for(const r of recent){const rate=money(r.isk_hr),dur=money(r.duration_seconds);if(!rate||!dur)continue;const k=r.anomaly||'Other';(groups[k] ||= []).push({rate,dur})}const scored=Object.entries(groups).map(([name,a])=>{const n=a.length,avg=a.reduce((sum,x)=>sum+x.rate,0)/n,avgDur=a.reduce((sum,x)=>sum+x.dur,0)/n,variance=a.reduce((sum,x)=>sum+(x.rate-avg)**2,0)/n,cv=avg?Math.sqrt(variance)/avg:1,confidence=n>=4?'High':n>=2?'Medium':'Low',score=avg*Math.min(1,n/3)*(1-Math.min(.35,cv*.12));return{name,n,avg,avgDur,confidence,score}}).sort((a,b)=>b.score-a.score);if(!scored.length)return;const x=scored[0],panel=document.createElement('section');panel.id='betaRecommendation';panel.className='panel sci-panel beta-recommendation';panel.innerHTML=`<div class="panel-head"><div><span class="eyebrow">RECOMMENDED SITE</span><h2>${esc(x.name)}</h2><span class="muted">Best current balance of recent pace, consistency and sample size.</span></div><span class="confidence-chip ${x.confidence.toLowerCase()}">${x.confidence} confidence</span></div><div class="recommend-grid"><div><small>Avg site bounty rate</small><b>${(x.avg/1e6).toFixed(1)}M/h</b></div><div><small>Avg completion</small><b>${Math.floor(x.avgDur/60)}m ${Math.round(x.avgDur%60)}s</b></div><div><small>Runs tracked</small><b>${x.n}</b></div></div><p class="recommend-why"><b>Why:</b> strongest weighted recent site performance. Lucky loot and escalation values are excluded.</p>`;q('.progression-metrics')?.insertAdjacentElement('afterend',panel)}).catch(()=>{})
 }
-function installFetchRules(){if(window.__betaFetchInstalled)return;window.__betaFetchInstalled=true;const native=window.fetch.bind(window);window.fetch=async function(input,init){let url=typeof input==='string'?input:input?.url||'',opts=init?{...init}:init;if(opts?.body&&/\/api\/run\/\d+\/bonus(?:\?|$)/.test(url)){try{const body=JSON.parse(opts.body);if(!['Sold','Ran Myself'].includes(body.escalation_status))body.escalation_sale_value=0;opts.body=JSON.stringify(body)}catch{}}return native(input,opts)}}
+function installFetchRules(){if(window.__betaFetchInstalled)return;window.__betaFetchInstalled=true;const native=window.fetch.bind(window);window.fetch=async function(input,init){let url=typeof input==='string'?input:input?.url||'',opts=init?{...init}:init;if(opts?.body&&/\/api\/run\/\d+\/bonus(?:\?|$)/.test(url)){try{const body=JSON.parse(opts.body);if(!['Sold','Ran Myself'].includes(body.escalation_status))body.escalation_sale_value=0;opts.body=JSON.stringify(body)}catch{}}const response=await native(input,opts);if(/\/api\/run\/\d+(?:\/complete)?(?:\?|$)/.test(url)&&!/\/(?:bonus|pause)(?:\?|$)/.test(url)){const nativeJson=response.json.bind(response);response.json=async()=>rewriteRunEscalations(await nativeJson())}return response}}
 async function repairStaleEscalations(){if(location.pathname!=='/history'||!BOOT.history?.runs||sessionStorage.getItem('betaEscRepair')==='done')return;const stale=BOOT.history.runs.filter(r=>!['Sold','Ran Myself'].includes(r.escalation_status)&&money(r.escalation_sale_value)>0);if(!stale.length){sessionStorage.setItem('betaEscRepair','done');return}let fixed=0;for(const r of stale){try{const resp=await fetch(`/api/run/${r.id}/bonus`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({escalation_name:r.escalation_name||'',escalation_status:r.escalation_status||'',escalation_sale_value:0,rare_spawn_type:r.rare_spawn_type||'',rare_spawn_name:r.rare_spawn_name||'',rare_spawn_value:money(r.rare_spawn_value),notes:r.notes||''})});if(resp.ok)fixed++}catch{}}sessionStorage.setItem('betaEscRepair','done');if(fixed)location.reload()}
-function observe(){let scheduled=false;const run=()=>{scheduled=false;applyBetaBrand();applyLocalTimes();installDashboardSync()};const mo=new MutationObserver(()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(run)});mo.observe(document.documentElement,{childList:true,subtree:true});run()}
+function observe(){let scheduled=false;const run=()=>{scheduled=false;applyBetaBrand();applyLocalTimes();installDashboardSync();applyEscalationModalRules()};const mo=new MutationObserver(()=>{if(scheduled)return;scheduled=true;requestAnimationFrame(run)});mo.observe(document.documentElement,{childList:true,subtree:true});run()}
 installFetchRules();
 function init(){applyBetaBrand();applyLocalTimes();installDashboardSync();recommendationBox();repairStaleEscalations();observe()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
