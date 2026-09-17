@@ -8,7 +8,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import httpx
-import pytest
 
 
 def boot(client, path):
@@ -27,28 +26,31 @@ def completed_run(client):
     return rid, sid
 
 
-@pytest.mark.parametrize('status', ['Sold', 'Ran Myself'])
-def test_realized_escalation_income_across_edits_and_reports(test_app, status):
+def test_realized_escalation_income_across_statuses_edits_and_reports(test_app):
     with httpx.Client(cookies=test_app["cookies"], headers=test_app["headers"], base_url=test_app['base_url'], trust_env=False) as client:
-        rid, sid = completed_run(client)
-        assert client.post('/api/session/end', json={'loot_value': 2000000, 'salvage_value': 3000000}).status_code == 200
-        for amount in [30000000, 45000000, 0]:
-            response = client.post(f'/api/run/{rid}/bonus', json={
-                'escalation_name': 'Angel Capital Staging', 'escalation_status': status,
-                'escalation_sale_value': amount, 'rare_spawn_value': 5000000})
-            assert response.status_code == 200
-            saved = client.get(f'/api/run/{rid}').json()['run']
-            assert saved['escalation_sale_value'] == amount
-            assert saved['escalation_loot'] == (amount if status == 'Ran Myself' else 0)
-            assert saved['escalation_sales'] == (amount if status == 'Sold' else 0)
-            history = boot(client, '/history')['history']
-            session = next(s for s in history['sessions'] if s['id'] == sid)
-            assert session['bonus'] == amount + 5000000
-            assert session['total'] == amount + 10000000
-            assert sum(d['bonus'] for d in history['chart_data']) == amount + 5000000
-            perf = boot(client, '/dashboard?days=7')['perf']
-            assert perf['total_isk'] == amount + 10000000
-            assert perf['rows'][0]['total_isk'] == amount + 10000000
+        for status in ['Sold', 'Ran Myself']:
+            rid, sid = completed_run(client)
+            assert client.post('/api/session/end', json={'loot_value': 2000000, 'salvage_value': 3000000}).status_code == 200
+            for amount in [30000000, 45000000, 0]:
+                response = client.post(f'/api/run/{rid}/bonus', json={
+                    'escalation_name': 'Angel Capital Staging', 'escalation_status': status,
+                    'escalation_sale_value': amount, 'rare_spawn_value': 5000000})
+                assert response.status_code == 200
+                saved = client.get(f'/api/run/{rid}').json()['run']
+                assert saved['escalation_sale_value'] == amount
+                assert saved['escalation_loot'] == (amount if status == 'Ran Myself' else 0)
+                assert saved['escalation_sales'] == (amount if status == 'Sold' else 0)
+                history = boot(client, '/history')['history']
+                session = next(s for s in history['sessions'] if s['id'] == sid)
+                assert session['bonus'] == amount + 5000000
+                assert session['total'] == amount + 10000000
+                expected_bonus_total = sum(s['bonus'] for s in history['sessions'])
+                assert sum(d['bonus'] for d in history['chart_data']) == expected_bonus_total
+                perf = boot(client, '/dashboard?days=7')['perf']
+                expected_total = sum(s['total'] for s in history['sessions'])
+                assert perf['total_isk'] == expected_total
+                perf_row = next(r for r in perf['rows'] if r['id'] == sid)
+                assert perf_row['total_isk'] == amount + 10000000
 
 
 def test_startup_preserves_ran_myself_income(test_app):

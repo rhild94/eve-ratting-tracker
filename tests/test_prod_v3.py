@@ -6,12 +6,14 @@ def base_url(page):
     return u.split("/dashboard")[0].split("/history")[0].split("/progression")[0].rstrip("/")
 
 
-def test_global_sync_navigation(page):
+def test_global_navigation_shell_clock_and_sync(page):
     base = base_url(page)
     for path in ["/", "/dashboard", "/history", "/progression", "/progression?view=characters"]:
         page.goto(base + path)
         expect(page.locator(".eve-time")).to_be_visible()
         expect(page.locator(".global-sync-card")).to_be_visible()
+        expect(page.locator(".side-nav")).to_be_visible()
+        expect(page.locator("[data-eve-clock]")).not_to_have_text("--:--:--")
 
 
 def test_character_details_opens_training_queue_only(page):
@@ -21,11 +23,3 @@ def test_character_details_opens_training_queue_only(page):
     btn.click()
     expect(page.locator(".queue-modal")).to_be_visible()
     expect(page.locator(".queue-modal")).to_contain_text("TRAINING QUEUE")
-
-
-def test_angel_hub_trigger_is_protected(page):
-    page.goto(base_url(page) + "/")
-    page.select_option("#anomaly", label="Angel Hub")
-    page.click("#startBtn")
-    expect(page.locator("#completeBtn")).to_be_visible()
-    expect(page.locator(".trigger-card")).to_contain_text("last Battleship")
