@@ -20,9 +20,9 @@
     if(!modal||!rareToggle||!rareFields)return;
 
     const toggleText=rareToggle.closest('.toggle-row')?.querySelector('span');
-    if(toggleText)toggleText.textContent='Commander / rare spawn';
+    if(toggleText&&toggleText.textContent!=='Commander / rare spawn')toggleText.textContent='Commander / rare spawn';
     const lootText=modal.querySelector('#gotRareLoot')?.closest('.mini-toggle')?.querySelector('span');
-    if(lootText)lootText.textContent='Rare drop / loot value';
+    if(lootText&&lootText.textContent!=='Rare drop / loot value')lootText.textContent='Rare drop / loot value';
 
     if(!modal.querySelector('#rareName')){
       const label=document.createElement('label');
@@ -60,7 +60,7 @@
     let escIndex=head.findIndex(th=>th.dataset.topic5Esc==='1'||th.textContent.trim()==='Bonus'||th.textContent.trim()==='Escalation');
     if(escIndex<0)return;
     const escHead=head[escIndex];
-    escHead.textContent='Escalation';
+    if(escHead.textContent!=='Escalation')escHead.textContent='Escalation';
     escHead.dataset.topic5Esc='1';
     let rareHead=table.querySelector('thead th[data-topic5-rare="1"]');
     if(!rareHead){
@@ -78,14 +78,16 @@
       const cells=[...row.children];
       const escCell=cells[escIndex];
       if(!escCell)return;
-      escCell.innerHTML=escalationCell(run);
+      const escMarkup=escalationCell(run);
+      if(escCell.innerHTML!==escMarkup)escCell.innerHTML=escMarkup;
       let rareCellNode=row.querySelector('td[data-topic5-rare="1"]');
       if(!rareCellNode){
         rareCellNode=document.createElement('td');
         rareCellNode.dataset.topic5Rare='1';
         escCell.insertAdjacentElement('afterend',rareCellNode);
       }
-      rareCellNode.innerHTML=rareCell(run);
+      const rareMarkup=rareCell(run);
+      if(rareCellNode.innerHTML!==rareMarkup)rareCellNode.innerHTML=rareMarkup;
     });
   }
 

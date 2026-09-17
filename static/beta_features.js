@@ -4,6 +4,7 @@ const BOOT=window.__BOOTSTRAP__||{};
 const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const money=v=>Number(v||0);
+const setText=(el,value)=>{if(el&&el.textContent!==value)el.textContent=value};
 const SITE_ESCALATIONS={
  'Angel Burrow':[],
  'Angel Hideaway':['Angel Repurposed Outpost (3/10)'],
@@ -38,8 +39,8 @@ function applyEscalationModalRules(){
  const modal=q('#modalContent'),select=q('#escName',modal),toggle=q('#gotEsc',modal);if(!modal||!select||!toggle)return;
  const anomaly=q('.modal-head h2',modal)?.textContent?.trim();if(!Object.prototype.hasOwnProperty.call(SITE_ESCALATIONS,anomaly))return;
  const choices=siteEscalations(anomaly),current=select.value;
- select.innerHTML='<option value="">Select escalation</option>'+choices.map(x=>`<option>${esc(x)}</option>`).join('');
- if(choices.includes(current))select.value=current;
+ const markup='<option value="">Select escalation</option>'+choices.map(x=>`<option>${esc(x)}</option>`).join('');
+ if(select.innerHTML!==markup){select.innerHTML=markup;if(choices.includes(current))select.value=current}
  const toggleRow=toggle.closest('.toggle-row');
  if(toggleRow)toggleRow.style.display=choices.length?'':'none';
  if(!choices.length){toggle.checked=false;q('#escFields',modal)?.classList.add('hidden');q('#escValueRow',modal)?.classList.add('hidden')}
@@ -48,25 +49,25 @@ function localDateTime(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN
 function localShortDate(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v);return d.toLocaleDateString(undefined,{month:'short',day:'2-digit'})}
 function localZone(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local time'}catch{return 'Local time'}}
 function applyBetaBrand(){
- const v=BOOT.version?`v${BOOT.version} Beta`:'Beta';const small=q('.brand small');if(small)small.textContent=v;
+ const v=BOOT.version?`v${BOOT.version} Beta`:'Beta';setText(q('.brand small'),v);
  if(!document.title.includes('Beta'))document.title+=' Beta';
- if(location.pathname==='/'){const labels=qa('.tracker-stats .card > span');for(const el of labels)if(el.textContent.trim()==='Bounty ISK/hr')el.textContent='Tracked Bounty ISK/h'}
+ if(location.pathname==='/'){const labels=qa('.tracker-stats .card > span');for(const el of labels)if(el.textContent.trim()==='Bounty ISK/hr')setText(el,'Tracked Bounty ISK/h')}
  if(location.pathname==='/dashboard'){
-  qa('.metric-card').forEach(card=>{const s=q('span',card),sm=q('small',card);if(s?.textContent.trim()==='Avg ISK/h'){s.textContent='Ratting ISK/h';if(sm)sm.textContent='Bounty + ESS only'}if(s?.textContent.trim()==='Best ISK/h')s.textContent='Best Ratting ISK/h'});
-  const h=q('.performance-panel h2'),p=q('.performance-panel .muted');if(h)h.textContent='Ratting ISK per Hour';if(p)p.textContent='Bounty + ESS only · Total ISK/h includes loot, salvage, rare drops and sold escalations.';
+  qa('.metric-card').forEach(card=>{const s=q('span',card),sm=q('small',card);if(s?.textContent.trim()==='Avg ISK/h'){setText(s,'Ratting ISK/h');setText(sm,'Bounty + ESS only')}if(s?.textContent.trim()==='Best ISK/h')setText(s,'Best Ratting ISK/h')});
+  setText(q('.performance-panel h2'),'Ratting ISK per Hour');setText(q('.performance-panel .muted'),'Bounty + ESS only · Total ISK/h includes loot, salvage, rare drops and sold escalations.');
  }
- if(location.pathname==='/progression'){const first=q('.progression-metrics .metric-card span');if(first&&first.textContent.includes('ISK/h'))first.textContent='Recent Bounty ISK/h'}
- if(new URLSearchParams(location.search).get('view')==='settings'){qa('.setting-row').forEach(row=>{if(q('span',row)?.textContent.trim()==='Version'){const b=q('b',row);if(b&&!b.textContent.includes('Beta'))b.textContent=`${b.textContent} Beta`}})}
+ if(location.pathname==='/progression'){const first=q('.progression-metrics .metric-card span');if(first&&first.textContent.includes('ISK/h'))setText(first,'Recent Bounty ISK/h')}
+ if(new URLSearchParams(location.search).get('view')==='settings'){qa('.setting-row').forEach(row=>{if(q('span',row)?.textContent.trim()==='Version'){const b=q('b',row);if(b&&!b.textContent.includes('Beta'))setText(b,`${b.textContent} Beta`)}})}
 }
 function applyLocalTimes(){
  const zone=localZone();
  if(location.pathname==='/history'&&BOOT.history){
-  for(const r of BOOT.history.runs||[]){const cell=q(`#runRow${r.id} td:first-child`);if(cell){cell.textContent=localDateTime(r.ended_at);cell.title=zone}}
-  const essRows=qa('.history-lower section:first-child tbody tr');(BOOT.history.ess||[]).slice(0,8).forEach((e,i)=>{const c=q('td:first-child',essRows[i]);if(c){c.textContent=localDateTime(e.date);c.title=zone}});
-  const escRows=qa('.escalation-list > div');(BOOT.history.runs||[]).filter(r=>r.escalation_name).slice(0,8).forEach((r,i)=>{const st=q('span',escRows[i]);if(st){st.textContent=localDateTime(r.ended_at);st.title=zone}});
+  for(const r of BOOT.history.runs||[]){const cell=q(`#runRow${r.id} td:first-child`);if(cell){setText(cell,localDateTime(r.ended_at));cell.title=zone}}
+  const essRows=qa('.history-lower section:first-child tbody tr');(BOOT.history.ess||[]).slice(0,8).forEach((e,i)=>{const c=q('td:first-child',essRows[i]);if(c){setText(c,localDateTime(e.date));c.title=zone}});
+  const escRows=qa('.escalation-list > div');(BOOT.history.runs||[]).filter(r=>r.escalation_name).slice(0,8).forEach((r,i)=>{const st=q('span',escRows[i]);if(st){setText(st,localDateTime(r.ended_at));st.title=zone}});
  }
- if(location.pathname==='/dashboard'&&BOOT.perf?.rows){const displayed=[...(BOOT.perf.rows||[])].slice(-5).reverse();qa('.mock-recent-row').forEach((row,i)=>{const st=q('span',row),src=displayed[i];if(st&&src){st.textContent=localShortDate(src.ended_at);st.title=`${localDateTime(src.ended_at)} · ${zone}`}})}
- if(location.pathname==='/progression'&&new URLSearchParams(location.search).get('view')==='characters'){(BOOT.characters||[]).forEach((c,i)=>{const card=qa('.character-card-xl')[i];if(!card||!c.captured_at)return;qa('.character-facts > div',card).forEach(box=>{if(q('small',box)?.textContent.trim()==='Last Snapshot'){const b=q('b',box);if(b){b.textContent=localDateTime(c.captured_at);b.title=zone}}})})}
+ if(location.pathname==='/dashboard'&&BOOT.perf?.rows){const displayed=[...(BOOT.perf.rows||[])].slice(-5).reverse();qa('.mock-recent-row').forEach((row,i)=>{const st=q('span',row),src=displayed[i];if(st&&src){setText(st,localShortDate(src.ended_at));st.title=`${localDateTime(src.ended_at)} · ${zone}`}})}
+ if(location.pathname==='/progression'&&new URLSearchParams(location.search).get('view')==='characters'){(BOOT.characters||[]).forEach((c,i)=>{const card=qa('.character-card-xl')[i];if(!card||!c.captured_at)return;qa('.character-facts > div',card).forEach(box=>{if(q('small',box)?.textContent.trim()==='Last Snapshot'){const b=q('b',box);if(b){setText(b,localDateTime(c.captured_at));b.title=zone}}})})}
 }
 function installDashboardSync(){
  if(location.pathname!=='/dashboard'||q('#betaDashboardSync'))return;const clock=q('.eve-time');if(!clock)return;
