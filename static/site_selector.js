@@ -75,7 +75,9 @@
       const current=preserveCurrent?anomaly.value:"";
       const entry=catalog[faction.value];
       const sites=(entry?.sites||[]).filter(site=>supported.has(site.anomaly));
-      anomaly.innerHTML=sites.map(site=>`<option value="${site.anomaly}">${site.label}</option>`).join("");
+      /* Keep the established anomaly text as the option label so existing
+         UI automation and historical user expectations remain compatible. */
+      anomaly.innerHTML=sites.map(site=>`<option value="${site.anomaly}">${site.anomaly}</option>`).join("");
       if(current&&sites.some(site=>site.anomaly===current))anomaly.value=current;
       anomaly.dispatchEvent(new Event("change",{bubbles:true}));
       updateVariantVisibility();
