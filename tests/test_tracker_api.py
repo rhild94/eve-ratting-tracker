@@ -4,7 +4,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -40,18 +40,22 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
         assert invalid.status_code == 400
         assert c.get("/api/dashboard").json()["active"] is None
 
-        started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        client_started = datetime.now(timezone.utc) - timedelta(seconds=120)
+        server_before = datetime.now(timezone.utc)
         response = start_run(
             c,
             notes="automated smoke test",
-            client_started_at=started_at,
+            client_started_at=client_started.isoformat(),
         )
+        server_after = datetime.now(timezone.utc)
         assert response.status_code == 200, response.text
         payload = response.json()
         run = payload["run"]
         rid, sid = run["id"], payload["session_id"]
         assert run["system_name"] == "W-16DY"
-        assert run["started_at"].startswith(started_at[:19])
+        persisted_start = datetime.fromisoformat(run["started_at"])
+        assert server_before - timedelta(seconds=1) <= persisted_start <= server_after + timedelta(seconds=1)
+        assert (persisted_start - client_started).total_seconds() > 100
 
         paused = c.post(f"/api/run/{rid}/pause")
         assert paused.status_code == 200
@@ -63,6 +67,7 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
         completed = c.post(f"/api/run/{rid}/complete")
         assert completed.status_code == 200
         assert completed.json()["bounty_pending"] is True
+        assert completed.json()["run"]["duration_seconds"] < 10
         dashboard = c.get("/api/dashboard").json()
         assert dashboard["active"] is None
         assert len(dashboard["recent"]) == 1

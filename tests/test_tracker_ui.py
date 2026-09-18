@@ -30,6 +30,17 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     expect(page.locator("h1")).to_contain_text("Site Tracker")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
 
+    page.evaluate("""() => {
+        const RealDate = Date;
+        const skewMs = -120000;
+        window.Date = class extends RealDate {
+            constructor(...args) {
+                if (args.length) super(...args);
+                else super(RealDate.now() + skewMs);
+            }
+            static now() { return RealDate.now() + skewMs; }
+        };
+    }""")
     page.select_option("#anomaly", label="Angel Haven")
     started = time.monotonic()
     page.click("#startBtn")
@@ -56,7 +67,14 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     time.sleep(2.2)
     assert page.locator("#timer").inner_text() != paused
 
+    live_parts = [int(x) for x in page.locator("#timer").inner_text().split(":")]
+    live_seconds = live_parts[0] * 3600 + live_parts[1] * 60 + live_parts[2]
     complete_site(page)
+    modal_time = page.locator(".result-summary > div").first.locator("b").inner_text()
+    modal_match = re.fullmatch(r"(\d+)m (\d{2})s", modal_time)
+    assert modal_match, modal_time
+    modal_seconds = int(modal_match.group(1)) * 60 + int(modal_match.group(2))
+    assert abs(modal_seconds - live_seconds) <= 2
     expect(page.locator("#saveNext")).to_be_visible()
     expect(page.locator("#skipNext")).to_have_count(0)
     saved_at = time.monotonic()
