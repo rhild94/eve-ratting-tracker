@@ -732,14 +732,9 @@ async def api_sync():
 async def api_start_run(request:Request):
     body=await request.json(); anomaly=body.get("anomaly",""); variant=body.get("variant",""); pids=[int(x) for x in body.get("participants",[])]; notes=(body.get("notes") or "").strip()
     if anomaly not in ANOMALIES or not pids:return JSONResponse({"ok":False,"error":"Choose an anomaly and at least one participant."},400)
+    # Persist run timing on the server clock only. Older clients may still send
+    # client_started_at, but browser clock skew must never change stored duration.
     st=iso()
-    client_started=body.get("client_started_at")
-    if client_started:
-        try:
-            candidate=parse_iso(client_started)
-            delta=abs((utcnow()-candidate).total_seconds())
-            if delta<=180: st=iso(candidate)
-        except: pass
     with db() as c:
         valid={r["character_id"] for r in c.execute("SELECT character_id FROM characters WHERE user_id=? AND COALESCE(connected,1)=1",(user_id(),))}
     if any(cid not in valid for cid in pids):

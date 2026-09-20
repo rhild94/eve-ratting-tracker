@@ -160,28 +160,26 @@ function runningView(run){
  renderWave();
 
  if(timerHandle)clearInterval(timerHandle);
- const startMs=new Date(run.started_at).getTime();
- const serverElapsed=()=>{
-  const paused=Number(run.paused_seconds||0);
-  const end=run.paused_at?new Date(run.paused_at).getTime():Date.now();
-  return Math.max(0,Math.floor((end-startMs)/1000-paused));
- };
- let uiElapsed=serverElapsed(),uiAnchor=Date.now(),uiPaused=!!run.is_paused;
- const currentSeconds=()=>uiPaused?uiElapsed:Math.max(0,uiElapsed+Math.floor((Date.now()-uiAnchor)/1000));
+ const authoritativeElapsed=()=>Math.max(0,Math.floor(Number(run.duration_seconds||0)));
+ let uiElapsed=authoritativeElapsed(),uiAnchor=performance.now(),uiPaused=!!run.is_paused;
+ const currentSeconds=()=>uiPaused?uiElapsed:Math.max(0,uiElapsed+Math.floor((performance.now()-uiAnchor)/1000));
  const drawTimer=()=>{const sec=currentSeconds(),timer=$("#timer");if(!timer)return;timer.textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");timer.classList.toggle("paused",uiPaused)};
  drawTimer();timerHandle=setInterval(drawTimer,250);
  $("#pauseBtn").addEventListener("click",async()=>{
   const b=$("#pauseBtn"),previous={...run},previousElapsed=uiElapsed,previousAnchor=uiAnchor,wasPaused=uiPaused;
   b.disabled=true;
   if(!wasPaused){
-   uiElapsed=currentSeconds();uiPaused=true;uiAnchor=Date.now();
+   uiElapsed=currentSeconds();uiPaused=true;uiAnchor=performance.now();
    run={...run,is_paused:true,paused_at:new Date().toISOString()};DATA.active=run;b.textContent="▶ Resume Timer";drawTimer();
   }
   try{
    const r=await fetch(`/api/run/${previous.id}/pause`,{method:"POST"}),j=await r.json();
    if(!r.ok)throw new Error(j.error||"Could not update timer.");
+   const fallbackElapsed=currentSeconds();
    run=j.run;DATA.active=j.run;
-   if(wasPaused){uiPaused=false;uiAnchor=Date.now();}else{uiPaused=true;}
+   const serverSeconds=Number(run.duration_seconds);
+   uiElapsed=Number.isFinite(serverSeconds)?Math.max(0,Math.floor(serverSeconds)):fallbackElapsed;
+   uiPaused=!!run.is_paused;uiAnchor=performance.now();
    b.textContent=uiPaused?"▶ Resume Timer":"⏸ Pause Timer";drawTimer();
   }catch(err){
    run=previous;DATA.active=previous;uiElapsed=previousElapsed;uiAnchor=previousAnchor;uiPaused=wasPaused;
@@ -221,14 +219,14 @@ async function refreshBackgroundStatus(){
   renderStats();renderRecent();renderSession();renderEsiStatus();
  }catch{}
 }
-function startingView(payload,clickedAt){
+function startingView(payload){
  if(timerHandle)clearInterval(timerHandle);
  $("#trackerContent").innerHTML=`<div class="running-head"><div><div class="eyebrow">Starting site…</div><h2>${escapeHtml(payload.anomaly)} <span>· ${escapeHtml(payload.variant||"Default")}</span></h2></div><div id="timer" class="timer">00:00:00</div></div>
  <div class="starting-cloud"><span class="pulse-dot"></span><div><b>Timer started locally</b><small>Saving the site start to the cloud…</small></div></div>
  <div class="run-actions"><button class="secondary" disabled>Saving start…</button></div>`;
- const started=new Date(clickedAt).getTime();
+ const started=performance.now();
  const tick=()=>{
-  const sec=Math.max(0,Math.floor((Date.now()-started)/1000));
+  const sec=Math.max(0,Math.floor((performance.now()-started)/1000));
   const timer=$("#timer");if(timer)timer.textContent=[Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,"0")).join(":");
  };
  tick();timerHandle=setInterval(tick,250);
@@ -237,10 +235,9 @@ function startingView(payload,clickedAt){
 async function startRun(){
  const btn=$("#startBtn");btn.disabled=true;setStatus("Starting…");
  const participants=[...document.querySelectorAll(".participant-card input:checked")].map(x=>Number(x.value));
- const clickedAt=new Date().toISOString();
- const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants,client_started_at:clickedAt};
+ const payload={anomaly:$("#anomaly").value,variant:$("#variant").value,participants};
  if(!participants.length){alert("Choose at least one participant.");btn.disabled=false;setStatus("");return;}
- startingView(payload,clickedAt);
+ startingView(payload);
  const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),60000);
  try{
   const r=await fetch("/api/run/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:controller.signal});
