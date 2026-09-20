@@ -556,6 +556,21 @@ def main_hud():
     sec=row["cache_security"]
     return {"character_name":row["name"],"system_name":row["cache_system_name"],"security":sec,"security_class":("High Sec" if sec>=0.45 else "Low Sec" if sec>0 else "Null Sec") if sec is not None else None,"affiliation":row["cache_affiliation"],"updated_at":row["location_updated_at"]}
 
+def account_site_preferences():
+    with db() as c:
+        row=c.execute("SELECT favorite_sites_json,last_site FROM users WHERE id=?",(user_id(),)).fetchone()
+    favorites=[]
+    if row:
+        try:
+            raw=json.loads(row["favorite_sites_json"] or "[]")
+            favorites=[x for x in raw if isinstance(x,str) and x in ANOMALIES]
+        except Exception:
+            favorites=[]
+    # Keep order stable while discarding stale/duplicate entries.
+    favorites=list(dict.fromkeys(favorites))
+    last_site=row["last_site"] if row and row["last_site"] in ANOMALIES else None
+    return {"favorite_sites":favorites,"last_site":last_site}
+
 async def dashboard_payload():
     with db() as c:
         chars=c.execute(f"SELECT character_id,name,COALESCE(character_role,'alt') AS character_role FROM characters WHERE characters.user_id={user_id()} AND COALESCE(connected,1)=1 ORDER BY CASE WHEN character_role='main' THEN 0 ELSE 1 END, connected_at").fetchall()
@@ -608,7 +623,8 @@ async def dashboard_payload():
         sync_state=c.execute(f"SELECT * FROM account_sync_state WHERE user_id={user_id()}").fetchone()
     esi_state={"pending_runs":pending_esi,"last_sync":last_sync,"interval_minutes":AUTO_SYNC_INTERVAL_SECONDS//60,"configured":bool(CLIENT_ID),"connected_characters":len(characters)}
     if sync_state:esi_state.update({k:sync_state[k] for k in ["last_attempt","last_success","last_error","next_check"]})
-    return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":esi_state,"hud":main_hud()}
+    prefs=account_site_preferences()
+    return {"characters":characters,"active":enrich(ar) if ar else None,"recent":[enrich(r) for r in recent],"stats":stats,"session":si,"anomalies":ANOMALIES,"esi":esi_state,"hud":main_hud(),**prefs}
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
@@ -621,6 +637,27 @@ async def dashboard_page(request:Request,days:int=30):
     perf=session_performance(days)
     boot={"page":"dashboard","perf":perf,"version":APP_VERSION}
     return templates.TemplateResponse(request=request,name="react.html",context={"boot":{**boot,"account":accounts.bootstrap(request)},"title":"Dashboard"})
+
+@app.post("/api/preferences/favorite-site")
+async def api_favorite_site(request:Request):
+    body=await request.json()
+    anomaly=str(body.get("anomaly") or "")
+    favorite=bool(body.get("favorite"))
+    if anomaly not in ANOMALIES:
+        return JSONResponse({"ok":False,"error":"Unknown site."},400)
+    with db() as c:
+        row=c.execute("SELECT favorite_sites_json FROM users WHERE id=?",(user_id(),)).fetchone()
+        try:
+            favorites=json.loads(row["favorite_sites_json"] or "[]") if row else []
+        except Exception:
+            favorites=[]
+        favorites=[x for x in favorites if isinstance(x,str) and x in ANOMALIES and x!=anomaly]
+        if favorite:
+            favorites.append(anomaly)
+        favorites=list(dict.fromkeys(favorites))
+        c.execute("UPDATE users SET favorite_sites_json=? WHERE id=?",
+                  (json.dumps(favorites,separators=(",",":")),user_id()))
+    return JSONResponse({"ok":True,"favorite_sites":favorites})
 
 @app.post("/api/character/{cid}/main")
 async def api_set_main_character(cid:int):
@@ -742,6 +779,7 @@ async def api_start_run(request:Request):
     system,ships=cached_run_context(pids)
     with db() as c:
         if c.execute(f"SELECT 1 FROM runs WHERE runs.user_id={user_id()} AND status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
+        c.execute("UPDATE users SET last_site=? WHERE id=?",(anomaly,user_id()))
         sid=ensure_session(c,st)
         rid=(c.execute(f"INSERT INTO runs(user_id,anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES({user_id()},?,?,?,?,?,'active',?,?,?,NULL) RETURNING id",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).fetchone()["id"] if USE_POSTGRES else c.execute(f"INSERT INTO runs(user_id,anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES({user_id()},?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid)
         run=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
@@ -760,6 +798,29 @@ async def api_toggle_pause(rid:int):
             c.execute(f"UPDATE runs SET paused_at=? WHERE runs.user_id={user_id()} AND id=?",(iso(),rid))
         updated=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
     return JSONResponse({"ok":True,"run":enrich(updated)})
+
+@app.post("/api/run/{rid}/prepare-completion")
+async def api_prepare_completion(rid:int):
+    now=utcnow()
+    with db() as c:
+        r=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=? AND status='active'",(rid,)).fetchone()
+        if not r:return JSONResponse({"ok":False,"error":"Active run not found."},404)
+        if not r["paused_at"]:
+            c.execute(f"UPDATE runs SET paused_at=? WHERE runs.user_id={user_id()} AND id=?",(iso(now),rid))
+        prepared=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
+    return JSONResponse({"ok":True,"run":enrich(prepared),"escalations":ESCALATIONS.get(prepared["anomaly"],[]),"bounty_pending":True})
+
+@app.post("/api/run/{rid}/cancel-completion")
+async def api_cancel_completion(rid:int):
+    now=utcnow()
+    with db() as c:
+        r=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=? AND status='active'",(rid,)).fetchone()
+        if not r:return JSONResponse({"ok":False,"error":"Active run not found."},404)
+        if r["paused_at"]:
+            added=max(0,(now-parse_iso(r["paused_at"])).total_seconds())
+            c.execute(f"UPDATE runs SET paused_at=NULL,paused_seconds=COALESCE(paused_seconds,0)+? WHERE runs.user_id={user_id()} AND id=?",(added,rid))
+        resumed=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
+    return JSONResponse({"ok":True,"run":enrich(resumed)})
 
 @app.post("/api/run/{rid}/complete")
 async def api_complete_run(rid:int):
