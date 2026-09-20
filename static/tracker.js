@@ -2,6 +2,7 @@
 window.DATA=window.INITIAL_DATA;
 let DATA=window.DATA;
 let timerHandle=null;
+let modalCloseHandler=null;
 const fmtM=v=>(Number(v||0)/1e6).toFixed(2)+"m";
 const $=s=>document.querySelector(s);
 const escapeHtml=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
@@ -206,7 +207,7 @@ function renderRecent(){
 function render(){
  renderStats();renderSession();renderRecent();renderEsiStatus();
  if(DATA.active)runningView(DATA.active);
- else{$("#trackerContent").innerHTML=startForm();setupVariants();setupCharacterRoles();$("#startBtn").addEventListener("click",startRun);}
+ else{$("#trackerContent").innerHTML=startForm();setupVariants();setupCharacterRoles();$("#startBtn").addEventListener("click",startRun);queueMicrotask(()=>window.SITE_PICKER?.refresh?.());}
 }
 async function refreshDashboard(){
  const r=await fetch("/api/dashboard"); if(r.ok){DATA=await r.json();render();}
@@ -257,11 +258,19 @@ async function startRun(){
  }finally{clearTimeout(timeout);}
 }
 async function completeRun(id){
- $("#completeBtn").disabled=true;setStatus("Completing…");
- const r=await fetch(`/api/run/${id}/complete`,{method:"POST"});const j=await r.json();
- if(!r.ok){alert(j.error||"Could not complete.");$("#completeBtn").disabled=false;return;}
- if(timerHandle)clearInterval(timerHandle);sessionStorage.removeItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+id);setStatus("Local data saved ✓ · ESI pending");
- showQuickResult(j.run,j.escalations,j.bounty_pending);
+ const btn=$("#completeBtn");if(btn)btn.disabled=true;setStatus("Freezing completion time…");
+ try{
+  const r=await fetch(`/api/run/${id}/prepare-completion`,{method:"POST"});const j=await r.json();
+  if(!r.ok)throw new Error(j.error||"Could not prepare completion.");
+  if(timerHandle)clearInterval(timerHandle);
+  DATA.active=j.run;
+  setStatus("Completion pending · timer frozen");
+  showQuickResult(j.run,j.escalations,j.bounty_pending);
+ }catch(err){
+  alert(err.message||"Could not prepare completion.");
+  if(btn)btn.disabled=false;
+  setStatus("");
+ }
 }
 function showQuickResult(run,escalations,bountyPending){
  const m=$("#modalContent"), esc=escalations.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
@@ -278,7 +287,8 @@ function showQuickResult(run,escalations,bountyPending){
   <label id="rareValueRow" class="conditional-value hidden">Rare loot / value<input id="rareValue" class="isk-input" inputmode="numeric" value=""></label>
  </div>
  <label class="result-note">Note <span class="muted">(optional)</span><input id="bonusNote"></label>
- <div class="modal-actions"><button id="saveNext" class="good big">Save & Next Site</button></div>`;
+ <p class="completion-cancel-note">ⓘ Cancel Completion returns you to the active site and resumes the timer without saving completion.</p>
+ <div class="modal-actions completion-actions"><button id="cancelCompletion" class="secondary big">Cancel Completion</button><button id="saveNext" class="good big">Save & Next Site</button></div>`;
  bindIskMask($("#escValue")); bindIskMask($("#rareValue"));
  const updateFields=()=>{
   const gotEsc=$("#gotEsc").checked, sold=gotEsc && ["Sold","Ran Myself"].includes($("#escStatus").value);
@@ -291,12 +301,33 @@ function showQuickResult(run,escalations,bountyPending){
  };
  $("#gotEsc").onchange=updateFields;$("#escStatus").onchange=updateFields;
  $("#gotRare").onchange=updateFields;$("#gotRareLoot").onchange=updateFields;
- $("#closeResult").onclick=()=>finishResult(false,run.id);
- $("#saveNext").onclick=()=>finishResult(true,run.id);
- updateFields();showModal();
+ const cancel=()=>cancelCompletion(run.id);
+ $("#closeResult").onclick=cancel;
+ $("#cancelCompletion").onclick=cancel;
+ $("#saveNext").onclick=()=>finishResult(run.id);
+ updateFields();showModal(cancel,"completion-modal");
 }
-async function finishResult(save,id){
- const btn=$("#saveNext"); if(btn){btn.disabled=true;btn.textContent="Saving…";}
+async function cancelCompletion(id){
+ const cancelBtn=$("#cancelCompletion"),saveBtn=$("#saveNext");
+ if(cancelBtn){cancelBtn.disabled=true;cancelBtn.textContent="Resuming…";}
+ if(saveBtn)saveBtn.disabled=true;
+ try{
+  const r=await fetch(`/api/run/${id}/cancel-completion`,{method:"POST"});const j=await r.json();
+  if(!r.ok)throw new Error(j.error||"Could not resume the site.");
+  DATA.active=j.run;
+  hideModal();
+  setStatus("Completion canceled · timer resumed");
+  runningView(j.run);
+ }catch(err){
+  alert(err.message||"Could not resume the site.");
+  if(cancelBtn){cancelBtn.disabled=false;cancelBtn.textContent="Cancel Completion";}
+  if(saveBtn)saveBtn.disabled=false;
+ }
+}
+async function finishResult(id){
+ const btn=$("#saveNext"),cancelBtn=$("#cancelCompletion");
+ if(btn){btn.disabled=true;btn.textContent="Saving…";}
+ if(cancelBtn)cancelBtn.disabled=true;
  const payload={
   escalation_name:$("#gotEsc").checked?$("#escName").value:"",
   escalation_status:$("#gotEsc").checked?$("#escStatus").value:"",
@@ -306,15 +337,24 @@ async function finishResult(save,id){
   notes:$("#bonusNote").value||""
  };
  try{
-  const r=await fetch(`/api/run/${id}/bonus`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  let j={}; try{j=await r.json()}catch{}
-  if(!r.ok)throw new Error(j.error||`Save failed (${r.status})`);
+  const bonus=await fetch(`/api/run/${id}/bonus`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  let bonusJson={}; try{bonusJson=await bonus.json()}catch{}
+  if(!bonus.ok)throw new Error(bonusJson.error||`Save failed (${bonus.status})`);
+
+  const complete=await fetch(`/api/run/${id}/complete`,{method:"POST"});
+  let completeJson={};try{completeJson=await complete.json()}catch{}
+  if(!complete.ok)throw new Error(completeJson.error||`Completion failed (${complete.status})`);
+
+  if(timerHandle)clearInterval(timerHandle);
+  sessionStorage.removeItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+id);
+  hideModal();
+  await refreshDashboard();
+  setStatus("Local data saved ✓ · ESI pending");
  }catch(err){
   alert("Could not save site result: "+err.message);
   if(btn){btn.disabled=false;btn.textContent="Save & Next Site";}
-  return;
+  if(cancelBtn)cancelBtn.disabled=false;
  }
- hideModal();await refreshDashboard();setStatus("Local data saved ✓ · ESI pending");
 }
 function showEndSession(){
  const m=$("#modalContent");
@@ -334,9 +374,22 @@ async function deleteRunFromTracker(id){
  if(!confirm("Delete/cancel this run? Use this for test runs. This cannot be undone."))return;
  const r=await fetch(`/api/run/${id}`,{method:"DELETE"});if(r.ok){if(timerHandle)clearInterval(timerHandle);sessionStorage.removeItem("wave_"+window.__BOOTSTRAP__.account.id+"_"+id);await refreshDashboard();}
 }
-function showModal(){$("#modalBackdrop").classList.remove("hidden")}
-function hideModal(){$("#modalBackdrop").classList.add("hidden")}
-$("#modalBackdrop").addEventListener("click",e=>{if(e.target.id==="modalBackdrop")hideModal()});
+function showModal(onClose=null,extraClass=""){
+ modalCloseHandler=typeof onClose==="function"?onClose:null;
+ const modal=$("#modalContent");
+ if(modal)modal.className="modal"+(extraClass?" "+extraClass:"");
+ $("#modalBackdrop").classList.remove("hidden");
+}
+function hideModal(){
+ $("#modalBackdrop").classList.add("hidden");
+ const modal=$("#modalContent");if(modal)modal.className="modal";
+ modalCloseHandler=null;
+}
+window.TRACKER_MODAL={show:showModal,hide:hideModal};
+$("#modalBackdrop").addEventListener("click",e=>{
+ if(e.target.id!=="modalBackdrop")return;
+ if(modalCloseHandler)modalCloseHandler();else hideModal();
+});
 $("#syncBtn").addEventListener("click",async()=>{
  const b=$("#syncBtn");b.disabled=true;b.textContent="Syncing ESI…";setStatus("Connecting to ESI… local tracker remains available");
  try{
