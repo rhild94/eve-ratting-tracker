@@ -239,7 +239,8 @@
     modal.innerHTML=`<div class="modal-head site-picker-head"><div><span class="eyebrow">SITE CATALOG</span><h2>Choose Site</h2><p class="hint">Quickly select the anomaly you want to run. Favorites stay at the top.</p></div><button id="closeSitePicker" class="icon-btn" aria-label="Close">×</button></div>
       <div class="site-picker-toolbar"><span class="site-search-icon">⌕</span><input id="siteSearch" autocomplete="off" placeholder="Search sites..." aria-label="Search sites"><button type="button" id="clearSiteSearch" class="tiny secondary">Clear</button><span class="site-faction-pill">Angel Cartel</span></div>
       <div class="site-picker-layout"><div id="sitePickerList" class="site-picker-list"></div><aside id="sitePickerDetail" class="site-picker-detail"></aside></div>`;
-    backdrop.classList.remove("hidden");
+    if(window.TRACKER_MODAL?.show)window.TRACKER_MODAL.show(closePicker,"site-picker-modal");
+    else backdrop.classList.remove("hidden");
     modal.querySelector("#closeSitePicker").onclick=closePicker;
     const input=modal.querySelector("#siteSearch");
     input.addEventListener("input",()=>{searchQuery=input.value;renderPickerLists()});
@@ -249,6 +250,7 @@
   }
 
   function closePicker(){
+    if(window.TRACKER_MODAL?.hide){window.TRACKER_MODAL.hide();return;}
     const modal=document.querySelector("#modalContent"),backdrop=document.querySelector("#modalBackdrop");
     if(modal)modal.className="modal";
     if(backdrop)backdrop.classList.add("hidden");
