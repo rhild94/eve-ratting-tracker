@@ -74,3 +74,23 @@ def test_angel_catalog_matches_backend_and_faction_selector():
     for anomaly, (tier, level) in expected_ratings.items():
         level_src = "null" if level is None else str(level)
         assert f'anomaly:"{anomaly}",tier:{tier},level:{level_src}' in source
+
+    expected_art = {
+        "hideaway": "angel-hideaway.webp",
+        "den": "angel-den.webp",
+        "hub": "angel-hub.webp",
+        "haven": "angel-haven.webp",
+        "sanctum": "angel-sanctum.webp",
+    }
+    for family, filename in expected_art.items():
+        assert f'{family}:"/static/site_art/{filename}?v=1"' in source
+        asset = Path("static/site_art") / filename
+        assert asset.exists() and asset.stat().st_size > 10_000
+
+    # Family routing must stay deterministic and the old generic Tracker artwork
+    # must not be used by the Site Catalog preview anymore.
+    assert 'if(anomaly==="Angel Sanctum")return "sanctum"' in source
+    assert 'if(anomaly==="Angel Haven")return "haven"' in source
+    assert 'if(anomaly.includes("Hideaway"))return "hideaway"' in source
+    assert 'anomaly.includes("Den"))return "den"' in source
+    assert "art_tracker.webp" not in source
