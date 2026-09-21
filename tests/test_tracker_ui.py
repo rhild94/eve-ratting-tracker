@@ -44,7 +44,7 @@ def complete_site(page):
 
 
 def save_completed_site(page):
-    save_completed_site(page)
+    page.click("#saveNext")
     expect(page.locator("#modalBackdrop")).to_have_class(re.compile(r"\bhidden\b"))
     expect(page.locator("#startBtn")).to_be_enabled()
 
