@@ -86,6 +86,7 @@ def test_cross_user_all_resource_boundaries_and_empty_account(isolated, monkeypa
     app=isolated
     a,b=client(app),client(app)
     assert authenticate(app,monkeypatch,a,1001).status_code==303
+    assert a.post("/api/preferences/favorite-site",json={"anomaly":"Angel Hub","favorite":True}).status_code==200
     run=start(a,1001).json();rid=run["run"]["id"];sid=run["session_id"]
     assert a.post(f"/api/run/{rid}/complete").status_code==200
     assert a.post(f"/api/run/{rid}/bonus",json={"notes":"PRIVATE-A","rare_spawn_value":9876}).status_code==200
@@ -97,13 +98,20 @@ def test_cross_user_all_resource_boundaries_and_empty_account(isolated, monkeypa
     dash=b.get("/api/dashboard?user_id=1").json()
     assert dash["recent"]==[] and dash["active"] is None and dash["session"] is None
     assert dash["stats"]["today_isk"]==dash["stats"]["today_ess"]==0
+    assert dash["favorite_sites"]==[] and dash["last_site"] is None
     assert [c["id"] for c in dash["characters"]]==[2002]
+    assert b.post("/api/preferences/favorite-site",json={"anomaly":"Angel Haven","favorite":True,"user_id":1}).status_code==200
+    assert b.get("/api/dashboard").json()["favorite_sites"]==["Angel Haven"]
+    assert a.get("/api/dashboard").json()["favorite_sites"]==["Angel Hub"]
     for path in ("/", "/history?analytics=1", "/dashboard", "/progression", "/progression?view=characters", "/?view=settings"):
         r=b.get(path);assert "PRIVATE-A" not in r.text and "PRIVATE-SESSION-A" not in r.text and "Pilot 1001" not in r.text
     for method,path,payload in [
         ("GET",f"/api/run/{rid}",None), ("DELETE",f"/api/run/{rid}",None),
         ("POST",f"/api/run/{rid}/bonus",{"notes":"stolen","user_id":1}),
-        ("POST",f"/api/run/{rid}/pause",{}), ("POST",f"/api/run/{rid}/complete",{}),
+        ("POST",f"/api/run/{rid}/pause",{}),
+        ("POST",f"/api/run/{rid}/prepare-completion",{}),
+        ("POST",f"/api/run/{rid}/cancel-completion",{}),
+        ("POST",f"/api/run/{rid}/complete",{}),
         ("GET",f"/api/session/{sid}",None), ("POST",f"/api/session/{sid}",{"notes":"stolen"}),
         ("DELETE",f"/api/session/{sid}",None), ("DELETE","/api/character/1001",None),
         ("POST","/api/character/1001/main",{}),

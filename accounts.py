@@ -121,6 +121,8 @@ def migrate(c, postgres, ensure_col):
     c.execute("CREATE TABLE IF NOT EXISTS account_migrations(version INTEGER PRIMARY KEY,completed_at BIGINT NOT NULL,summary_json TEXT NOT NULL)")
     c.execute("CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),csrf_token TEXT NOT NULL,expires_at BIGINT NOT NULL)")
     c.execute("CREATE TABLE IF NOT EXISTS account_sync_state(user_id BIGINT PRIMARY KEY REFERENCES users(id),last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT)")
+    ensure_col(c, "users", "favorite_sites_json TEXT")
+    ensure_col(c, "users", "last_site TEXT")
     for definition in ("browser_hash TEXT", "intent TEXT", "user_id BIGINT", "session_hash TEXT"):
         ensure_col(c, "oauth_states", definition)
     ensure_col(c, "characters", "owner_hash TEXT")
@@ -287,8 +289,8 @@ class Accounts:
         source_uid, destination_uid, authenticated_cid = int(source_uid), int(destination_uid), int(authenticated_cid)
         if source_uid == destination_uid:
             return
-        source = c.execute("SELECT primary_character_id FROM users WHERE id=?", (source_uid,)).fetchone()
-        destination = c.execute("SELECT primary_character_id FROM users WHERE id=?", (destination_uid,)).fetchone()
+        source = c.execute("SELECT primary_character_id,favorite_sites_json,last_site FROM users WHERE id=?", (source_uid,)).fetchone()
+        destination = c.execute("SELECT primary_character_id,favorite_sites_json,last_site FROM users WHERE id=?", (destination_uid,)).fetchone()
         if not source or not destination:
             raise HTTPException(409, "Account connection changed; please try again")
         if int(source["primary_character_id"] or 0) != authenticated_cid:
@@ -298,6 +300,22 @@ class Accounts:
         owner_row = c.execute("SELECT user_id FROM characters WHERE character_id=?", (authenticated_cid,)).fetchone()
         if not owner_row or int(owner_row["user_id"]) != source_uid:
             raise HTTPException(409, "Account connection changed; please try again")
+
+        # Preserve lightweight tracker preferences when two authenticated accounts merge.
+        def _favorites(row):
+            try:
+                values=json.loads(row["favorite_sites_json"] or "[]")
+            except Exception:
+                values=[]
+            return [str(x) for x in values if isinstance(x,str)]
+
+        merged_favorites=[]
+        for anomaly in _favorites(destination)+_favorites(source):
+            if anomaly not in merged_favorites:
+                merged_favorites.append(anomaly)
+        merged_last_site=destination["last_site"] or source["last_site"]
+        c.execute("UPDATE users SET favorite_sites_json=?,last_site=? WHERE id=?",
+                  (json.dumps(merged_favorites,separators=(",",":")),merged_last_site,destination_uid))
 
         source_before = {table: c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (source_uid,)).fetchone()["n"] for table in OWNED_TABLES}
         destination_before = {table: c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (destination_uid,)).fetchone()["n"] for table in OWNED_TABLES}

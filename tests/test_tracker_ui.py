@@ -12,8 +12,25 @@ def base_url(page):
     return u.rstrip("/")
 
 
+def choose_site(page, anomaly):
+    selected = page.locator("#selectedSiteName")
+    expect(page.locator("#changeSite")).to_be_visible()
+    if selected.inner_text().strip() == anomaly:
+        return
+    page.click("#changeSite")
+    expect(page.locator("#modalContent")).to_have_class(re.compile(r"site-picker-modal"))
+    card = page.locator(
+        f".site-picker-section:not(.favorites-section) .site-picker-card[data-picker-site='{anomaly}']"
+    )
+    expect(card).to_have_count(1)
+    card.click()
+    expect(page.locator("#sitePickerDetail")).to_contain_text(anomaly)
+    page.click("#useSelectedSite")
+    expect(selected).to_have_text(anomaly)
+
+
 def start_site(page, anomaly="Angel Haven"):
-    page.select_option("#anomaly", label=anomaly)
+    choose_site(page, anomaly)
     expect(page.locator(".participant-card")).to_contain_text("Playwright Pilot")
     page.click("#startBtn")
     expect(page.locator("#completeBtn")).to_be_visible()
@@ -26,9 +43,39 @@ def complete_site(page):
     expect(page.locator("#modalContent")).to_contain_text("Site complete")
 
 
+def save_completed_site(page):
+    page.click("#saveNext")
+    expect(page.locator("#modalBackdrop")).to_have_class(re.compile(r"\bhidden\b"))
+    expect(page.locator("#startBtn")).to_be_enabled()
+
+
 def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     expect(page.locator("h1")).to_contain_text("Site Tracker")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
+    expect(page.locator("#changeSite")).to_be_visible()
+    expect(page.locator("#selectedSiteName")).to_be_visible()
+
+    # The visible selector is the modal/card UI, while the native select remains
+    # hidden underneath for compatibility with the existing start payload.
+    page.click("#changeSite")
+    picker = page.locator("#modalContent")
+    expect(picker).to_have_class(re.compile(r"site-picker-modal"))
+    expect(picker).to_contain_text("Choose Site")
+    hub = picker.locator(".site-picker-section:not(.favorites-section) .site-picker-card[data-picker-site='Angel Hub']")
+    haven = picker.locator(".site-picker-section:not(.favorites-section) .site-picker-card[data-picker-site='Angel Haven']")
+    sanctum = picker.locator(".site-picker-section:not(.favorites-section) .site-picker-card[data-picker-site='Angel Sanctum']")
+    expect(hub).to_contain_text("Tier 8 · Level 1")
+    expect(haven).to_contain_text("Tier 9")
+    expect(sanctum).to_contain_text("Tier 10 · Level 1")
+
+    haven.click()
+    haven.locator(".site-star").click()
+    expect(picker.locator(".favorites-section")).to_contain_text("Angel Haven")
+    page.click("#useSelectedSite")
+    expect(page.locator("#selectedSiteName")).to_have_text("Angel Haven")
+    expect(page.locator(".site-favorite-chip")).to_contain_text("Angel Haven")
+    dashboard = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
+    assert dashboard["favorite_sites"] == ["Angel Haven"]
 
     page.evaluate("""() => {
         const RealDate = Date;
@@ -41,7 +88,6 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
             static now() { return RealDate.now() + skewMs; }
         };
     }""")
-    page.select_option("#anomaly", label="Angel Haven")
     started = time.monotonic()
     page.click("#startBtn")
     expect(page.locator("#timer")).to_be_visible(timeout=1000)
@@ -75,19 +121,44 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     assert modal_match, modal_time
     modal_seconds = int(modal_match.group(1)) * 60 + int(modal_match.group(2))
     assert abs(modal_seconds - live_seconds) <= 2
-    expect(page.locator("#saveNext")).to_be_visible()
-    expect(page.locator("#skipNext")).to_have_count(0)
+    expect(page.locator("#cancelCompletion")).to_be_visible()
+
+    # Complete Site is only a draft/freeze. It must not move the run to History.
+    while_open = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
+    assert while_open["active"] is not None
+    assert while_open["recent"] == []
+    time.sleep(1.1)
+    assert page.locator(".result-summary > div").first.locator("b").inner_text() == modal_time
+
+    page.click("#cancelCompletion")
+    expect(page.locator("#modalBackdrop")).to_have_class(re.compile(r"\bhidden\b"))
+    expect(page.locator("#completeBtn")).to_be_visible()
+    resumed_at = page.locator("#timer").inner_text()
+    time.sleep(1.15)
+    assert page.locator("#timer").inner_text() != resumed_at
+
+    # Final save completes the run, and the same site remains selected for chaining.
+    complete_site(page)
     saved_at = time.monotonic()
-    page.click("#saveNext")
+    save_completed_site(page)
     expect(page.locator("#startBtn")).to_be_enabled()
     assert time.monotonic() - saved_at < 3.0
     expect(page.locator("#saveStatus")).to_contain_text("Local data saved")
+    expect(page.locator("#selectedSiteName")).to_have_text("Angel Haven")
+    expect(page.locator(".site-favorite-chip")).to_contain_text("Angel Haven")
 
+    # Exercise another site through the picker and verify X has the same cancel
+    # semantics as the explicit Cancel Completion button.
     start_site(page, "Angel Hub")
     expect(page.locator(".trigger-card")).to_contain_text("last Battleship")
     complete_site(page)
-    page.click("#saveNext")
-
+    page.click("#closeResult")
+    expect(page.locator("#modalBackdrop")).to_have_class(re.compile(r"\bhidden\b"))
+    expect(page.locator("#completeBtn")).to_be_visible()
+    active = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
+    assert active["active"]["anomaly"] == "Angel Hub"
+    complete_site(page)
+    save_completed_site(page)
 
 def test_completion_modal_realized_income_statuses_and_conditional_fields(page):
     run_ids = []
@@ -115,7 +186,7 @@ def test_completion_modal_realized_income_statuses_and_conditional_fields(page):
 
         page.fill("#escValue", str(amount))
         expect(page.locator("#escValue")).to_have_value("123,456,789")
-        page.click("#saveNext")
+        save_completed_site(page)
         expect(page.locator("#trackerContent")).to_contain_text("Start Site")
 
         data = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
@@ -142,7 +213,7 @@ def test_history_escalation_editing_persists_and_pending_clears_value(page):
     for _ in range(2):
         start_site(page, "Angel Hub")
         complete_site(page)
-        page.click("#saveNext")
+        save_completed_site(page)
     data = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
     sold_id, ran_id = data["recent"][0]["id"], data["recent"][1]["id"]
 
@@ -204,7 +275,7 @@ def test_esi_failure_health_layout_and_unconfigured_state(page):
     expect(page.locator("#startBtn")).to_be_enabled()
     start_site(page)
     complete_site(page)
-    page.click("#saveNext")
+    save_completed_site(page)
 
     page.evaluate("""() => {
       DATA.esi.last_error = 'simulated ESI outage';
@@ -240,7 +311,7 @@ def test_esi_failure_health_layout_and_unconfigured_state(page):
 def test_history_session_edit_and_run_delete(page):
     start_site(page)
     complete_site(page)
-    page.click("#saveNext")
+    save_completed_site(page)
     page.click("#endSessionBtn")
     page.fill("#lootValue", "10000000")
     page.fill("#salvageValue", "15000000")
