@@ -113,6 +113,8 @@ def test_merge_preserves_source_history_characters_and_destination_main(isolated
     assert authenticate(app, monkeypatch, destination, 1001).status_code == 303
     assert authenticate(app, monkeypatch, source, 2002).status_code == 303
     assert authenticate(app, monkeypatch, source, 2003, connect=True).status_code == 303
+    assert destination.post("/api/preferences/favorite-site", json={"anomaly": "Angel Hub", "favorite": True}).status_code == 200
+    assert source.post("/api/preferences/favorite-site", json={"anomaly": "Angel Haven", "favorite": True}).status_code == 200
 
     run = source.post("/api/run/start", json={"anomaly": "Angel Haven", "participants": [2002]}).json()
     rid, sid = run["run"]["id"], run["session_id"]
@@ -133,6 +135,9 @@ def test_merge_preserves_source_history_characters_and_destination_main(isolated
     assert chars == {1001: "main", 2002: "alt", 2003: "alt"}
     assert destination.get(f"/api/run/{rid}").json()["run"]["notes"] == "SOURCE-RUN"
     assert destination.get(f"/api/session/{sid}").json()["session"]["notes"] == "SOURCE-SESSION"
+    prefs = destination.get("/api/dashboard").json()
+    assert set(prefs["favorite_sites"]) == {"Angel Hub", "Angel Haven"}
+    assert prefs["last_site"] == "Angel Haven"
 
     with app.db() as db:
         assert db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 1

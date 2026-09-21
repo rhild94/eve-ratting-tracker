@@ -57,6 +57,15 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
         assert server_before - timedelta(seconds=1) <= persisted_start <= server_after + timedelta(seconds=1)
         assert (persisted_start - client_started).total_seconds() > 100
 
+        dashboard = c.get("/api/dashboard").json()
+        assert dashboard["last_site"] == "Angel Haven"
+        assert dashboard["favorite_sites"] == []
+        favorite = c.post("/api/preferences/favorite-site", json={"anomaly": "Angel Haven", "favorite": True})
+        assert favorite.status_code == 200
+        assert favorite.json()["favorite_sites"] == ["Angel Haven"]
+        assert c.get("/api/dashboard").json()["favorite_sites"] == ["Angel Haven"]
+        assert c.post("/api/preferences/favorite-site", json={"anomaly": "Not a real site", "favorite": True}).status_code == 400
+
         paused = c.post(f"/api/run/{rid}/pause")
         assert paused.status_code == 200
         assert paused.json()["run"]["is_paused"] is True
@@ -64,15 +73,24 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
         assert resumed.status_code == 200
         assert resumed.json()["run"]["is_paused"] is False
 
-        completed = c.post(f"/api/run/{rid}/complete")
-        assert completed.status_code == 200
-        assert completed.json()["bounty_pending"] is True
-        assert completed.json()["run"]["duration_seconds"] < 10
+        prepared = c.post(f"/api/run/{rid}/prepare-completion")
+        assert prepared.status_code == 200
+        assert prepared.json()["run"]["is_paused"] is True
         dashboard = c.get("/api/dashboard").json()
-        assert dashboard["active"] is None
-        assert len(dashboard["recent"]) == 1
-        assert dashboard["esi"]["pending_runs"] == 1
+        assert dashboard["active"]["id"] == rid
+        assert dashboard["recent"] == []
 
+        time.sleep(0.05)
+        canceled = c.post(f"/api/run/{rid}/cancel-completion")
+        assert canceled.status_code == 200
+        assert canceled.json()["run"]["is_paused"] is False
+        assert c.get("/api/dashboard").json()["active"]["id"] == rid
+
+        prepared = c.post(f"/api/run/{rid}/prepare-completion")
+        assert prepared.status_code == 200
+        assert prepared.json()["run"]["is_paused"] is True
+
+        # The UI stores result details while the run is still active, then finalizes.
         saved_bonus = c.post(f"/api/run/{rid}/bonus", json={
             "escalation_name": "Angel Capital Staging",
             "escalation_status": "Sold",
@@ -83,6 +101,18 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
             "notes": "saved locally",
         })
         assert saved_bonus.status_code == 200, saved_bonus.text
+
+        completed = c.post(f"/api/run/{rid}/complete")
+        assert completed.status_code == 200
+        assert completed.json()["bounty_pending"] is True
+        assert completed.json()["run"]["duration_seconds"] < 10
+        dashboard = c.get("/api/dashboard").json()
+        assert dashboard["active"] is None
+        assert len(dashboard["recent"]) == 1
+        assert dashboard["esi"]["pending_runs"] == 1
+        assert dashboard["favorite_sites"] == ["Angel Haven"]
+        assert dashboard["last_site"] == "Angel Haven"
+
         saved = c.get(f"/api/run/{rid}").json()["run"]
         assert saved["escalation_status"] == "Sold"
         assert saved["escalation_sale_value"] == 123456789
