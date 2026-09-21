@@ -43,6 +43,12 @@ def complete_site(page):
     expect(page.locator("#modalContent")).to_contain_text("Site complete")
 
 
+def save_completed_site(page):
+    save_completed_site(page)
+    expect(page.locator("#modalBackdrop")).to_have_class(re.compile(r"\bhidden\b"))
+    expect(page.locator("#startBtn")).to_be_enabled()
+
+
 def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     expect(page.locator("h1")).to_contain_text("Site Tracker")
     expect(page.locator("#trackerContent")).to_contain_text("Start Site")
@@ -134,7 +140,7 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     # Final save completes the run, and the same site remains selected for chaining.
     complete_site(page)
     saved_at = time.monotonic()
-    page.click("#saveNext")
+    save_completed_site(page)
     expect(page.locator("#startBtn")).to_be_enabled()
     assert time.monotonic() - saved_at < 3.0
     expect(page.locator("#saveStatus")).to_contain_text("Local data saved")
@@ -152,7 +158,7 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     active = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
     assert active["active"]["anomaly"] == "Angel Hub"
     complete_site(page)
-    page.click("#saveNext")
+    save_completed_site(page)
 
 def test_completion_modal_realized_income_statuses_and_conditional_fields(page):
     run_ids = []
@@ -180,7 +186,7 @@ def test_completion_modal_realized_income_statuses_and_conditional_fields(page):
 
         page.fill("#escValue", str(amount))
         expect(page.locator("#escValue")).to_have_value("123,456,789")
-        page.click("#saveNext")
+        save_completed_site(page)
         expect(page.locator("#trackerContent")).to_contain_text("Start Site")
 
         data = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
@@ -207,7 +213,7 @@ def test_history_escalation_editing_persists_and_pending_clears_value(page):
     for _ in range(2):
         start_site(page, "Angel Hub")
         complete_site(page)
-        page.click("#saveNext")
+        save_completed_site(page)
     data = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
     sold_id, ran_id = data["recent"][0]["id"], data["recent"][1]["id"]
 
@@ -269,7 +275,7 @@ def test_esi_failure_health_layout_and_unconfigured_state(page):
     expect(page.locator("#startBtn")).to_be_enabled()
     start_site(page)
     complete_site(page)
-    page.click("#saveNext")
+    save_completed_site(page)
 
     page.evaluate("""() => {
       DATA.esi.last_error = 'simulated ESI outage';
@@ -305,7 +311,7 @@ def test_esi_failure_health_layout_and_unconfigured_state(page):
 def test_history_session_edit_and_run_delete(page):
     start_site(page)
     complete_site(page)
-    page.click("#saveNext")
+    save_completed_site(page)
     page.click("#endSessionBtn")
     page.fill("#lootValue", "10000000")
     page.fill("#salvageValue", "15000000")
