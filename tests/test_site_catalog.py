@@ -85,7 +85,9 @@ def test_angel_catalog_matches_backend_and_faction_selector():
     for family, filename in expected_art.items():
         assert f'{family}:"/static/site_art/{filename}?v=1"' in source
         asset = Path("static/site_art") / filename
-        assert asset.exists() and asset.stat().st_size > 10_000
+        assert asset.exists() and asset.stat().st_size > 4_000
+        payload = asset.read_bytes()
+        assert payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
 
     # Family routing must stay deterministic and the old generic Tracker artwork
     # must not be used by the Site Catalog preview anymore.
