@@ -39,9 +39,41 @@
   const selectedKey=`eve-ratting:selected-site:${accountId}`;
   let pickerSelection=null;
   let searchQuery="";
+  let siteArtPreloaded=false;
+
+  const siteArt={
+    hideaway:"/static/site_art/angel-hideaway.webp?v=1",
+    den:"/static/site_art/angel-den.webp?v=1",
+    hub:"/static/site_art/angel-hub.webp?v=1",
+    haven:"/static/site_art/angel-haven.webp?v=1",
+    sanctum:"/static/site_art/angel-sanctum.webp?v=1"
+  };
+  const fallbackArt=siteArt.hub;
+
+  function artFamily(site){
+    const anomaly=site?.anomaly||"";
+    if(anomaly==="Angel Sanctum")return "sanctum";
+    if(anomaly==="Angel Haven")return "haven";
+    if(anomaly.includes("Hideaway"))return "hideaway";
+    if(anomaly==="Angel Burrow"||anomaly==="Angel Refuge"||anomaly.includes("Den"))return "den";
+    return "hub";
+  }
+  function artFor(site){
+    return siteArt[artFamily(site)]||fallbackArt;
+  }
+  function preloadSiteArt(){
+    if(siteArtPreloaded)return;
+    siteArtPreloaded=true;
+    [...new Set(Object.values(siteArt))].forEach(src=>{
+      const image=new Image();
+      image.decoding="async";
+      image.src=src;
+    });
+  }
 
   window.SITE_CATALOG=catalog;
   window.SITE_META=Object.fromEntries(allSites.map(site=>[site.anomaly,{...site}]));
+  window.SITE_ART={...siteArt,familyFor:artFamily};
 
   const data=()=>window.DATA||window.INITIAL_DATA||{};
   const supported=()=>new Set((data().anomalies||[]).map(String));
@@ -187,7 +219,10 @@
     if(!site)return '<div class="site-picker-empty large">No supported sites.</div>';
     const fav=favorites().has(site.anomaly);
     const variantList=variants(site);
-    return `<div class="site-picker-detail-art" role="img" aria-label="EVE space artwork"></div>
+    const artwork=artFor(site);
+    return `<div class="site-picker-detail-art">
+      <img src="${esc(artwork)}" alt="${esc(site.anomaly)} environment artwork" width="400" height="300" decoding="async">
+    </div>
       <div class="site-picker-detail-title">${favoriteButton(site,fav,"detail-star")}<div><span class="small-title">Selected Site</span><h2>${esc(site.anomaly)}</h2></div></div>
       <div class="site-rating-badge prominent">${esc(rating(site))}</div>
       <p class="site-picker-detail-copy">Choose the site here, then pick its variant on the Tracker before starting.</p>
@@ -213,6 +248,12 @@
       renderPickerLists();
     }));
     wireFavoriteButtons(modal);
+    const preview=modal.querySelector(".site-picker-detail-art img");
+    preview?.addEventListener("error",()=>{
+      if(preview.dataset.fallbackApplied)return;
+      preview.dataset.fallbackApplied="1";
+      preview.src=fallbackArt;
+    });
     modal.querySelector("#useSelectedSite")?.addEventListener("click",()=>{
       if(pickerSelection)setNative(pickerSelection);
       closePicker();
@@ -229,6 +270,7 @@
   }
 
   function openPicker(){
+    preloadSiteArt();
     const select=nativeSelect();
     if(!select)return;
     pickerSelection=select.value||readSelected();
