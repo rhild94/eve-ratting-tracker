@@ -116,7 +116,11 @@ def test_merge_preserves_source_history_characters_and_destination_main(isolated
     assert destination.post("/api/preferences/favorite-site", json={"anomaly": "Angel Hub", "favorite": True}).status_code == 200
     assert source.post("/api/preferences/favorite-site", json={"anomaly": "Angel Haven", "favorite": True}).status_code == 200
 
-    run = source.post("/api/run/start", json={"anomaly": "Angel Haven", "participants": [2002]}).json()
+    run = source.post("/api/run/start", json={
+        "anomaly": "Angel Haven",
+        "variant": "Rock Haven · Pirate Gate",
+        "participants": [2002],
+    }).json()
     rid, sid = run["run"]["id"], run["session_id"]
     assert source.post(f"/api/run/{rid}/complete").status_code == 200
     assert source.post(f"/api/run/{rid}/bonus", json={"notes": "SOURCE-RUN", "rare_spawn_value": 9876}).status_code == 200
@@ -138,6 +142,8 @@ def test_merge_preserves_source_history_characters_and_destination_main(isolated
     prefs = destination.get("/api/dashboard").json()
     assert set(prefs["favorite_sites"]) == {"Angel Hub", "Angel Haven"}
     assert prefs["last_site"] == "Angel Haven"
+    assert prefs["last_participants"] == [2002]
+    assert prefs["last_variants"]["Angel Haven"] == "Rock Haven · Pirate Gate"
 
     with app.db() as db:
         assert db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 1

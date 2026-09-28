@@ -167,6 +167,6 @@ def clean_runtime_data(test_app):
         c.execute("DELETE FROM sessions")
         # Tracker preferences are intentionally persistent in production, but
         # regression scenarios must start from a known account preference state.
-        c.execute("UPDATE users SET favorite_sites_json=NULL,last_site=NULL")
+        c.execute("UPDATE users SET favorite_sites_json=NULL,last_site=NULL,last_participants_json=NULL,site_variants_json=NULL")
     yield
 

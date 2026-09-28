@@ -74,6 +74,8 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     page.click("#useSelectedSite")
     expect(page.locator("#selectedSiteName")).to_have_text("Angel Haven")
     expect(page.locator(".site-favorite-chip")).to_contain_text("Angel Haven")
+    page.select_option("#variant", label="Rock Haven · Pirate Gate")
+    expect(page.locator("#variant")).to_have_value("Rock Haven · Pirate Gate")
     dashboard = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
     assert dashboard["favorite_sites"] == ["Angel Haven"]
 
@@ -100,7 +102,8 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     expect(page.locator(".wave-composition")).to_be_visible()
     expect(page.locator(".wave-composition")).to_contain_text("Current wave")
     expect(page.locator(".wave-composition .rat-row").first).to_be_visible()
-    expect(page.locator(".trigger-card")).to_contain_text("last Battleship")
+    expect(page.locator(".running-head")).to_contain_text("Rock Haven · Pirate Gate")
+    expect(page.locator(".trigger-card")).to_contain_text("No specific trigger")
 
     time.sleep(1.15)
     page.click("#pauseBtn")
@@ -146,6 +149,10 @@ def test_tracker_start_timer_pause_save_and_wave_helpers(page):
     expect(page.locator("#saveStatus")).to_contain_text("Local data saved")
     expect(page.locator("#selectedSiteName")).to_have_text("Angel Haven")
     expect(page.locator(".site-favorite-chip")).to_contain_text("Angel Haven")
+    expect(page.locator("#variant")).to_have_value("Rock Haven · Pirate Gate")
+    remembered = page.evaluate("() => fetch('/api/dashboard').then(r => r.json())")
+    assert remembered["last_participants"] == [90000001]
+    assert remembered["last_variants"]["Angel Haven"] == "Rock Haven · Pirate Gate"
 
     # Exercise another site through the picker and verify X has the same cancel
     # semantics as the explicit Cancel Completion button.

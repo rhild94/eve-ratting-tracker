@@ -44,6 +44,7 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
         server_before = datetime.now(timezone.utc)
         response = start_run(
             c,
+            variant="Rock Haven · Pirate Gate",
             notes="automated smoke test",
             client_started_at=client_started.isoformat(),
         )
@@ -59,6 +60,8 @@ def test_run_lifecycle_validation_persistence_and_session_completion(test_app):
 
         dashboard = c.get("/api/dashboard").json()
         assert dashboard["last_site"] == "Angel Haven"
+        assert dashboard["last_participants"] == [90000001]
+        assert dashboard["last_variants"] == {"Angel Haven": "Rock Haven · Pirate Gate"}
         assert dashboard["favorite_sites"] == []
         favorite = c.post("/api/preferences/favorite-site", json={"anomaly": "Angel Haven", "favorite": True})
         assert favorite.status_code == 200
