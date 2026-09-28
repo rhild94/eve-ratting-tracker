@@ -307,7 +307,10 @@
     field.classList.add("site-native-field");
 
     const selected=readSelected();
-    if(selected&&supported().has(selected))anomaly.value=selected;
+    if(selected&&supported().has(selected)&&anomaly.value!==selected){
+      anomaly.value=selected;
+      anomaly.dispatchEvent(new Event("change",{bubbles:true}));
+    }
     rememberSelected(anomaly.value);
 
     const block=document.createElement("div");

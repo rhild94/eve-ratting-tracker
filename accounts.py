@@ -123,6 +123,8 @@ def migrate(c, postgres, ensure_col):
     c.execute("CREATE TABLE IF NOT EXISTS account_sync_state(user_id BIGINT PRIMARY KEY REFERENCES users(id),last_attempt TEXT,last_success TEXT,last_error TEXT,next_check TEXT)")
     ensure_col(c, "users", "favorite_sites_json TEXT")
     ensure_col(c, "users", "last_site TEXT")
+    ensure_col(c, "users", "last_participants_json TEXT")
+    ensure_col(c, "users", "site_variants_json TEXT")
     for definition in ("browser_hash TEXT", "intent TEXT", "user_id BIGINT", "session_hash TEXT"):
         ensure_col(c, "oauth_states", definition)
     ensure_col(c, "characters", "owner_hash TEXT")
@@ -289,8 +291,8 @@ class Accounts:
         source_uid, destination_uid, authenticated_cid = int(source_uid), int(destination_uid), int(authenticated_cid)
         if source_uid == destination_uid:
             return
-        source = c.execute("SELECT primary_character_id,favorite_sites_json,last_site FROM users WHERE id=?", (source_uid,)).fetchone()
-        destination = c.execute("SELECT primary_character_id,favorite_sites_json,last_site FROM users WHERE id=?", (destination_uid,)).fetchone()
+        source = c.execute("SELECT primary_character_id,favorite_sites_json,last_site,last_participants_json,site_variants_json FROM users WHERE id=?", (source_uid,)).fetchone()
+        destination = c.execute("SELECT primary_character_id,favorite_sites_json,last_site,last_participants_json,site_variants_json FROM users WHERE id=?", (destination_uid,)).fetchone()
         if not source or not destination:
             raise HTTPException(409, "Account connection changed; please try again")
         if int(source["primary_character_id"] or 0) != authenticated_cid:
@@ -309,13 +311,43 @@ class Accounts:
                 values=[]
             return [str(x) for x in values if isinstance(x,str)]
 
+        def _participants(row):
+            try:
+                values=json.loads(row["last_participants_json"] or "[]")
+            except Exception:
+                values=[]
+            result=[]
+            if isinstance(values,list):
+                for value in values:
+                    try:
+                        cid=int(value)
+                    except (TypeError,ValueError):
+                        continue
+                    if cid not in result:
+                        result.append(cid)
+            return result
+
+        def _variants(row):
+            try:
+                values=json.loads(row["site_variants_json"] or "{}")
+            except Exception:
+                values={}
+            if not isinstance(values,dict):
+                return {}
+            return {str(site):str(variant) for site,variant in values.items()
+                    if isinstance(site,str) and isinstance(variant,str) and variant}
+
         merged_favorites=[]
         for anomaly in _favorites(destination)+_favorites(source):
             if anomaly not in merged_favorites:
                 merged_favorites.append(anomaly)
         merged_last_site=destination["last_site"] or source["last_site"]
-        c.execute("UPDATE users SET favorite_sites_json=?,last_site=? WHERE id=?",
-                  (json.dumps(merged_favorites,separators=(",",":")),merged_last_site,destination_uid))
+        merged_participants=_participants(destination) or _participants(source)
+        merged_variants={**_variants(source),**_variants(destination)}
+        c.execute("UPDATE users SET favorite_sites_json=?,last_site=?,last_participants_json=?,site_variants_json=? WHERE id=?",
+                  (json.dumps(merged_favorites,separators=(",",":")),merged_last_site,
+                   json.dumps(merged_participants,separators=(",",":")),
+                   json.dumps(merged_variants,separators=(",",":")),destination_uid))
 
         source_before = {table: c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (source_uid,)).fetchone()["n"] for table in OWNED_TABLES}
         destination_before = {table: c.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE user_id=?", (destination_uid,)).fetchone()["n"] for table in OWNED_TABLES}
