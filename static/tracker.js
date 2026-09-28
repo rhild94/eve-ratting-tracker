@@ -67,11 +67,11 @@ function renderStats(){
  $("#statSites").textContent=DATA.stats.today_sites;
  $("#statIskHr").textContent=fmtM(DATA.stats.avg_isk_hr);
 }
-function participantCard(c){
+function participantCard(c,selected=true){
  const main=c.role==="main";
  return `<div class="participant-wrap ${main?"main-character":"alt-character"}">
   <label class="participant-card">
-   <input type="checkbox" value="${c.id}" checked>
+   <input type="checkbox" value="${c.id}" ${selected?"checked":""}>
    <img src="${c.portrait}" alt="${escapeHtml(c.name)}">
    <span class="character-copy"><span>${escapeHtml(c.name)}</span><small>${main?"Main character":"Alt"}</small></span>
    <b>✓</b>
@@ -93,16 +93,25 @@ function setupCharacterRoles(){
 }
 function startForm(){
  const opts=DATA.anomalies.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
+ const available=new Set(DATA.characters.map(c=>Number(c.id)));
+ const remembered=(Array.isArray(DATA.last_participants)?DATA.last_participants:[]).map(Number).filter(id=>available.has(id));
+ const selected=remembered.length?new Set(remembered):null;
  return `<div class="start-layout">
  <div class="field"><label>Anomaly</label><select id="anomaly">${opts}</select></div>
  <div class="field"><label>Variant</label><select id="variant"></select><div id="variantHint" class="hint"></div></div>
- <div class="field full"><label>Participants</label><div class="participants">${DATA.characters.map(participantCard).join("")}</div></div>
+ <div class="field full"><label>Participants</label><div class="participants">${DATA.characters.map(c=>participantCard(c,!selected||selected.has(Number(c.id)))).join("")}</div></div>
  <div class="start-row"><button id="startBtn" class="start big">▶ Start Site</button></div>
  </div>`;
 }
 function setupVariants(){
  const a=$("#anomaly"),v=$("#variant"),h=$("#variantHint");
- function update(){const list=window.VARIANTS[a.value]||["Default"];v.innerHTML=list.map(x=>`<option>${escapeHtml(x)}</option>`).join("");h.textContent=window.VARIANT_HINTS[a.value]||"";}
+ function update(){
+  const list=window.VARIANTS[a.value]||["Default"];
+  v.innerHTML=list.map(x=>`<option>${escapeHtml(x)}</option>`).join("");
+  const remembered=DATA.last_variants?.[a.value];
+  if(remembered&&list.includes(remembered))v.value=remembered;
+  h.textContent=window.VARIANT_HINTS[a.value]||"";
+ }
  a.addEventListener("change",update);update();
 }
 function waveRows(w){
@@ -244,6 +253,9 @@ async function startRun(){
   const r=await fetch("/api/run/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:controller.signal});
   let j={}; try{j=await r.json()}catch{}
   if(!r.ok)throw new Error(j.error||`Could not start (${r.status})`);
+  DATA.last_participants=[...participants];
+  DATA.last_variants={...(DATA.last_variants||{}),[payload.anomaly]:payload.variant||"Default"};
+  DATA.last_site=payload.anomaly;
   DATA.active=j.run;DATA.session=DATA.session||{id:j.session_id,sites:0,bounty:0};setStatus("Local data saved ✓ · ESI pending");renderSession();runningView(j.run);
  }catch(err){
   try{

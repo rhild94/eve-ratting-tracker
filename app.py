@@ -558,18 +558,41 @@ def main_hud():
 
 def account_site_preferences():
     with db() as c:
-        row=c.execute("SELECT favorite_sites_json,last_site FROM users WHERE id=?",(user_id(),)).fetchone()
+        row=c.execute("SELECT favorite_sites_json,last_site,last_participants_json,site_variants_json FROM users WHERE id=?",(user_id(),)).fetchone()
+        connected={int(r["character_id"]) for r in c.execute("SELECT character_id FROM characters WHERE user_id=? AND COALESCE(connected,1)=1",(user_id(),))}
     favorites=[]
+    last_participants=[]
+    last_variants={}
     if row:
         try:
             raw=json.loads(row["favorite_sites_json"] or "[]")
             favorites=[x for x in raw if isinstance(x,str) and x in ANOMALIES]
         except Exception:
             favorites=[]
+        try:
+            raw=json.loads(row["last_participants_json"] or "[]")
+            if isinstance(raw,list):
+                for value in raw:
+                    try:
+                        cid=int(value)
+                    except (TypeError,ValueError):
+                        continue
+                    if cid in connected and cid not in last_participants:
+                        last_participants.append(cid)
+        except Exception:
+            last_participants=[]
+        try:
+            raw=json.loads(row["site_variants_json"] or "{}")
+            if isinstance(raw,dict):
+                last_variants={site:variant for site,variant in raw.items()
+                               if site in ANOMALIES and isinstance(variant,str) and variant}
+        except Exception:
+            last_variants={}
     # Keep order stable while discarding stale/duplicate entries.
     favorites=list(dict.fromkeys(favorites))
     last_site=row["last_site"] if row and row["last_site"] in ANOMALIES else None
-    return {"favorite_sites":favorites,"last_site":last_site}
+    return {"favorite_sites":favorites,"last_site":last_site,
+            "last_participants":last_participants,"last_variants":last_variants}
 
 async def dashboard_payload():
     with db() as c:
@@ -779,7 +802,19 @@ async def api_start_run(request:Request):
     system,ships=cached_run_context(pids)
     with db() as c:
         if c.execute(f"SELECT 1 FROM runs WHERE runs.user_id={user_id()} AND status='active'").fetchone():return JSONResponse({"ok":False,"error":"A site is already running."},409)
-        c.execute("UPDATE users SET last_site=? WHERE id=?",(anomaly,user_id()))
+        pref=c.execute("SELECT site_variants_json FROM users WHERE id=?",(user_id(),)).fetchone()
+        try:
+            site_variants=json.loads(pref["site_variants_json"] or "{}") if pref else {}
+        except Exception:
+            site_variants={}
+        if not isinstance(site_variants,dict):
+            site_variants={}
+        site_variants={site:value for site,value in site_variants.items()
+                       if site in ANOMALIES and isinstance(value,str) and value}
+        site_variants[anomaly]=variant or "Default"
+        c.execute("UPDATE users SET last_site=?,last_participants_json=?,site_variants_json=? WHERE id=?",
+                  (anomaly,json.dumps(list(dict.fromkeys(pids)),separators=(",",":")),
+                   json.dumps(site_variants,separators=(",",":")),user_id()))
         sid=ensure_session(c,st)
         rid=(c.execute(f"INSERT INTO runs(user_id,anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES({user_id()},?,?,?,?,?,'active',?,?,?,NULL) RETURNING id",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).fetchone()["id"] if USE_POSTGRES else c.execute(f"INSERT INTO runs(user_id,anomaly,variant,started_at,participants_json,notes,status,system_name,ships_json,session_id,esi_synced_at) VALUES({user_id()},?,?,?,?,?,'active',?,?,?,NULL)",(anomaly,variant or None,st,json.dumps(pids),notes,system,json.dumps(ships),sid)).lastrowid)
         run=c.execute(f"SELECT * FROM runs WHERE runs.user_id={user_id()} AND id=?",(rid,)).fetchone()
